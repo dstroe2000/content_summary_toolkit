@@ -25,7 +25,7 @@ External Dependencies:
     - fabric: AI-powered text processing tool with -y flag and patterns (summarize, youtube_summary, extract_wisdom)
 
 Example:
-    python youtube_summary_generator.py '[Learn RAG From Scratch](https://www.youtube.com/watch?v=sVcwVQRHIc8)'
+    python youtube_summary_generator.py "[Learn RAG From Scratch](https://www.youtube.com/watch?v=sVcwVQRHIc8)"
 """
 
 import subprocess
@@ -155,37 +155,38 @@ def process_youtube_entry(entry):
 
     # Get transcript using fabric
     subtitle_file = f"output/subtitle/{title}.txt"
-    reference_cmd = f"fabric -y '{reference}' --transcript-with-timestamps > '{subtitle_file}' "
+    reference_cmd = f"""fabric -y "{reference}" --transcript-with-timestamps > "{subtitle_file}" """
     source_information = _run_command(reference_cmd)
-    print(f"... generated '{subtitle_file}' subtitle file \n")
+    print(f"""... generated "{subtitle_file}" subtitle file \n""")
 
     # Get summary using fabric's summarize pattern
     # Command: fabric -p summarize source_information
     print("Getting summary ...")
-    summary_cmd = f"cat '{subtitle_file}' | fabric -p summarize"
+    summary_cmd = f"""cat "{subtitle_file}" | fabric -p summarize"""
     summary = _run_command(summary_cmd)
     filtered_summary = _filter_think_sections(summary)
-    print(f"... generated summary section \n")
+    print(f"""... generated summary section \n""")
 
     # Get YouTube summary using fabric's youtube_summary pattern
     # Command: fabric -p youtube_summary
     print("Getting YouTube summary...")
-    yt_summary_cmd = f"cat '{subtitle_file}' | fabric -p youtube_summary"
+    yt_summary_cmd = f"""cat "{subtitle_file}" | fabric -p youtube_summary"""
     youtube_summary = _run_command(yt_summary_cmd)
     filtered_youtube_summary = _filter_think_sections(youtube_summary)
-    print(f"... generated youtube summary section")
+    print(f"""... generated youtube summary section""")
+
     
     # Extract wisdom using fabric's extract_wisdom pattern
     # Command: fabric -p extract_wisdom
     print("Extracting YouTube Wisdom ...")
-    yt_summary_cmd = f"cat '{subtitle_file}' | fabric -p extract_wisdom"
+    yt_summary_cmd = f"""cat "{subtitle_file}" | fabric -p extract_wisdom"""
     extract_wisdom = _run_command(yt_summary_cmd)
     filtered_extract_wisdom = _filter_think_sections(extract_wisdom)
-    print(f"... generated youtube summary section")
+    print(f"""... generated youtube summary section""")
 
     # Create filename from title
     # Filename format: generated/{title}.md
-    filename = f"output/yt_generated/{title}.md"
+    filename = f"""output/yt_generated/{title}.md"""
 
     # Create the content following the specified structure
     # Structure per specification:

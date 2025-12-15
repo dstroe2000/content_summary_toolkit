@@ -149,14 +149,14 @@ def process_blog_entry(entry):
 
     # Get blog_file using fabric
     blog_file = f"output/blog/{title}.md"
-    reference_cmd = f"fabric -u '{reference}'  > '{blog_file}' "
+    reference_cmd = f"""fabric -u "{reference}"  > "{blog_file}" """
     source_information = _run_command(reference_cmd)
     print(f"... generated '{blog_file}' blog file \n")
 
     # Get summary using fabric's summarize pattern
     # Command: fabric -p summarize source_information
     print("Getting Blog summary ...")
-    summary_cmd = f"cat '{blog_file}' | fabric -p summarize"
+    summary_cmd = f"""cat "{blog_file}" | fabric -p summarize"""
     summary = _run_command(summary_cmd)
     filtered_summary = _filter_think_sections(summary)
     print(f"... generated blog summary section \n")
@@ -165,14 +165,14 @@ def process_blog_entry(entry):
     # Extract wisdom using fabric's extract_wisdom pattern
     # Command: fabric -p extract_wisdom
     print("Extracting Blog Wisdom ...")
-    wisdom_cmd = f"cat '{blog_file}' | fabric -p extract_wisdom"
+    wisdom_cmd = f"""cat "{blog_file}" | fabric -p extract_wisdom"""
     extract_wisdom = _run_command(wisdom_cmd)
     filtered_extract_wisdom = _filter_think_sections(extract_wisdom)
     print(f"... generated blog extract wisdom section\n")
 
     # Create filename from title
     # Filename format: output/blog_generated/{title}.md
-    filename = f"output/blog_generated/{title}.md"
+    filename = f"""output/blog_generated/{title}.md"""
 
     # Create the content following the specified structure
     # Structure per specification:
