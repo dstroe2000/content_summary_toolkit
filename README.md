@@ -1,1 +1,189 @@
-# fabric_backlog
+# Fabric Backlog Processor
+
+A batch content summarizer that processes YouTube videos and blog articles using AI-powered summarization through the [fabric](https://github.com/danielmiessler/fabric) tool.
+
+## Overview
+
+This tool helps you process a backlog of content (YouTube videos and blog articles) by automatically generating structured markdown summaries. It extracts transcripts from YouTube videos, fetches blog content, and creates comprehensive summaries using multiple AI patterns.
+
+## Features
+
+- **Batch Processing**: Process multiple entries from a single batch file
+- **Multi-Format Support**: Handles both YouTube videos and blog articles
+- **AI-Powered Summaries**: Uses fabric's AI patterns for intelligent summarization
+- **Multiple Summary Types**: Generates different perspectives on content:
+  - General summary
+  - YouTube-specific summary (for videos)
+  - Extracted wisdom and insights
+- **Organized Output**: Structured folder hierarchy for easy navigation
+- **Comprehensive Reporting**: Detailed statistics and success metrics
+- **Error Resilient**: Continues processing even if individual entries fail
+
+## Prerequisites
+
+- Python 3.x
+- [fabric](https://github.com/danielmiessler/fabric) - AI-powered text processing tool
+  - Must be installed and configured with API access
+  - Requires patterns: `summarize`, `youtube_summary`, `extract_wisdom`
+
+## Installation
+
+1. Clone this repository
+2. Ensure fabric is installed and configured:
+   ```bash
+   # Install fabric (follow fabric's installation guide)
+   # https://github.com/danielmiessler/fabric
+   ```
+
+## Usage
+
+### Batch Processing
+
+Process a batch file containing multiple entries:
+
+```bash
+python batch_processor.py batch_entries.txt
+```
+
+### Individual Processing
+
+Process a single YouTube video:
+```bash
+python youtube_summary_generator.py '[Learn RAG From Scratch](https://www.youtube.com/watch?v=sVcwVQRHIc8)'
+```
+
+Process a single blog article:
+```bash
+python blog_summary_generator.py '[Article Title](https://example.com/article)'
+```
+
+## Batch File Format
+
+Create a text file with entries in markdown link format. The processor supports:
+
+**Supported Entries:**
+- **YouTube videos**: `[Video Title](https://youtube.com/watch?v=...)`
+- **Blog articles**: `[Article Title](https://example.com/article)`
+- **Markdown headers**: `# Section Name` (skipped)
+- **Commentary**: `\# This is a comment` (skipped)
+- **Separators**: `---` (skipped)
+- **Empty lines** (skipped)
+
+**Example batch_entries.txt:**
+```markdown
+# AI and Machine Learning
+
+[Learn RAG From Scratch – Python AI Tutorial from a LangChain Engineer](https://www.youtube.com/watch?v=sVcwVQRHIc8)
+
+[Article - More of Silicon Valley is building on free Chinese AI](https://www.nbcnews.com/tech/innovation/silicon-valley-building-free-chinese-ai-rcna242430)
+
+---
+
+# Web Development
+
+\# This is a note to self - check this later
+
+[Building Modern Web Apps](https://example.com/modern-web-apps)
+```
+
+## Output Structure
+
+The processor creates an organized folder structure:
+
+```
+output/
+├── subtitle/              # YouTube transcripts
+│   └── {video-title}.txt
+├── yt_generated/          # YouTube summaries
+│   └── {video-title}.md
+├── blog/                  # Fetched blog content
+│   └── {article-title}.md
+└── blog_generated/        # Blog summaries
+    └── {article-title}.md
+```
+
+## Summary Output Format
+
+### YouTube Videos
+Each generated summary contains:
+1. Link to original video
+2. General summary
+3. YouTube-specific summary
+4. Extracted wisdom
+
+### Blog Articles
+Each generated summary contains:
+1. Link to original article
+2. General summary
+3. Extracted wisdom
+
+All summaries automatically filter out AI thinking process (`<think>` tags).
+
+## Processing Report
+
+After batch processing completes, you'll see a comprehensive report:
+
+```
+==================================================
+Batch Processing Summary
+==================================================
+Total lines:           25
+YouTube processed:     8
+Blog processed:        12
+Skipped:              3
+Invalid format:       1
+Errors:               1
+Success rate:         95.2%
+Total time:           5 min 23.45 sec
+==================================================
+```
+
+## Architecture
+
+The project consists of three main components:
+
+1. **batch_processor.py**: Main orchestrator
+   - Parses batch files
+   - Routes entries to appropriate generators
+   - Tracks statistics and generates reports
+
+2. **youtube_summary_generator.py**: YouTube processor
+   - Downloads transcripts using `fabric -y`
+   - Generates 3 types of summaries
+   - Creates structured markdown output
+
+3. **blog_summary_generator.py**: Blog processor
+   - Fetches blog content using `fabric -u`
+   - Generates 2 types of summaries
+   - Creates structured markdown output
+
+## Error Handling
+
+The processor is designed to be resilient:
+- Individual entry failures don't stop batch processing
+- All errors are collected and reported at the end
+- Invalid format lines are logged and skipped
+- Network issues are caught and reported
+
+## Use Cases
+
+- **Content Curation**: Process your reading/watching backlog
+- **Research**: Quickly extract insights from multiple sources
+- **Knowledge Management**: Build a searchable library of summaries
+- **Learning**: Review key points from educational content
+- **Content Creation**: Gather research for articles or videos
+
+## Contributing
+
+This project uses detailed specifications in the `specs/` folder:
+- `specs/top_level.md` - Batch processor specification
+- `specs/youtube_summary_generator.md` - YouTube processing specification
+- `specs/blog_summary_generator.md` - Blog processing specification
+
+## License
+
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+Built with [fabric](https://github.com/danielmiessler/fabric) by Daniel Miessler
