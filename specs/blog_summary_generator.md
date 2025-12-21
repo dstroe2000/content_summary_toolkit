@@ -20,12 +20,12 @@ If is NOT a YouTube reference (YouTube URLs are skipped) then you need to genera
     - **output/blog_generated/** folder for storing generated summary markdown files
 - The file name is the **output/blog_generated/{title}.md**, where the title name that is extracted from the square bracket [title]
 - The source information is retrieved from reference is under round brackers (reference) and saved to an intermediate blog file **output/blog/{title}.md**
-fabric -u '{reference}' > 'output/blog/{title}.md'
+fabric -u "{reference}" > "output/blog/{title}.md"
 - The **summary** of the content is obtain by running this bash command
-cat 'output/blog/{title}.md' | fabric -p summarize
+cat "output/blog/{title}.md" | fabric -p summarize
     - please make sure that the information under the <think></think> section is filtered out
 - The **extract_wisdom** of the content is obtain by running this bash command
-cat 'output/blog/{title}.md' | fabric -p extract_wisdom
+cat "output/blog/{title}.md" | fabric -p extract_wisdom
     - please make sure that the information under the <think></think> section is filtered out
 - you need to aggregate the information **summary** and **extract_wisdom** that you obtained in the following structure:
 

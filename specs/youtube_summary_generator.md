@@ -20,15 +20,15 @@ If is youtube reference then you need to generate  the following structure:
     - **output/yt_generated/** folder for storing generated markdown files
 - The file name is the **output/yt_generated/{title}.md**, where the title name that is extracted from the square bracket [title]
 - The source information is retrieved from reference is under round brackers (reference) and saved to an intermediate subtitle file **output/subtitle/{title}.txt**
-fabric -y '{reference}' --transcript-with-timestamps > 'output/subtitle/{title}.txt'
+fabric -y "{reference}" --transcript-with-timestamps > "output/subtitle/{title}.txt"
 - The **summary** of the content is obtain by running this bash command
-cat 'output/subtitle/{title}.txt' | fabric -p summarize
+cat "output/subtitle/{title}.txt" | fabric -p summarize
     - please make sure that the information under the <think></think> section is filtered out
 - The **youtube_summary** of the content is obtain by running this bash command
-cat 'output/subtitle/{title}.txt' | fabric -p youtube_summary
+cat "output/subtitle/{title}.txt" | fabric -p youtube_summary
     - please make sure that the information under the <think></think> section is filtered out
 - The **extract_wisdom** of the content is obtain by running this bash command
-cat 'output/subtitle/{title}.txt' | fabric -p extract_wisdom
+cat "output/subtitle/{title}.txt" | fabric -p extract_wisdom
     - please make sure that the information under the <think></think> section is filtered out
 - you need to aggregate the information **summary**, **youtube_summary**, and **extract_wisdom** that you obtained in the following structure:
 

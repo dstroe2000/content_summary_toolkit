@@ -17,7 +17,7 @@ External Dependencies:
     - blog_summary_generator: Provides process_blog_entry() function
 
 Example:
-    python batch_processor.py batch_entries.txt
+    python fabric_backlog.py batch_entries.txt
 """
 
 import sys
@@ -299,10 +299,10 @@ if __name__ == "__main__":
     Main entry point for the batch processor script.
 
     Usage:
-        python batch_processor.py <batch_file>
+        python fabric_backlog.py <batch_file>
 
     Example:
-        python batch_processor.py batch_entries.txt
+        python fabric_backlog.py batch_entries.txt
 
     The script expects exactly one command-line argument: the path to a batch file
     containing entries to process. Each line in the batch file should be one of:
@@ -318,9 +318,9 @@ if __name__ == "__main__":
         1: Batch file could not be processed (file not found, permission error, etc.)
     """
     if len(sys.argv) != 2:
-        print("Usage: python batch_processor.py <batch_file>")
+        print("Usage: python fabric_backlog.py <batch_file>")
         print("\nExample:")
-        print("  python batch_processor.py batch_entries.txt")
+        print("  python fabric_backlog.py batch_entries.txt")
         sys.exit(1)
 
     batch_file = sys.argv[1]

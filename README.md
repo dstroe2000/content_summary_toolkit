@@ -42,7 +42,7 @@ This tool helps you process a backlog of content (YouTube videos and blog articl
 Process a batch file containing multiple entries:
 
 ```bash
-python batch_processor.py batch_entries.txt
+python fabric_backlog.py batch_entries.txt
 ```
 
 ### Individual Processing
@@ -142,7 +142,7 @@ Total time:           5 min 23.45 sec
 
 The project consists of three main components:
 
-1. **batch_processor.py**: Main orchestrator
+1. **fabric_backlog.py**: Main orchestrator
    - Parses batch files
    - Routes entries to appropriate generators
    - Tracks statistics and generates reports
