@@ -28,7 +28,6 @@ Current files have this structure:
 Updated files should have this structure:
 ```markdown
 [{author_name}]({channel_url})
-
 [Link](https://www.youtube.com/watch?v=VIDEO_ID)
 
 ---
@@ -65,7 +64,7 @@ For each markdown file in the target folder:
    - Insert `[{author_name}]({channel_url})` on a new line
    - Place it immediately before the existing `[Link](...)`  line
    - Preserve all other content exactly as is
-   - Maintain proper spacing (blank line after author line)
+   - No blank line between author line and link line
 
 6. **Write updated content back to file**
    - Overwrite the original file with updated content
@@ -156,7 +155,6 @@ This video teaches RAG from scratch...
 ### After:
 ```markdown
 [freeCodeCamp.org](https://www.youtube.com/@freecodecamp)
-
 [Link](https://www.youtube.com/watch?v=sVcwVQRHIc8)
 
 ---

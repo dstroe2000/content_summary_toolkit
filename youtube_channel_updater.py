@@ -174,14 +174,13 @@ def _update_file_content(content, author_name, channel_url):
 
         After:
             [freeCodeCamp.org](https://www.youtube.com/@freecodecamp)
-
             [Link](https://www.youtube.com/watch?v=VIDEO_ID)
     """
     # Pattern to find [Link](youtube_url)
     pattern = r'(\[Link\]\(https://(?:www\.)?youtube\.com/watch\?v=[^\)]+\))'
 
     # Create the author line to insert
-    author_line = f'[{author_name}]({channel_url})\n\n'
+    author_line = f'[{author_name}]({channel_url})\n'
 
     # Replace [Link](...) with author_line + [Link](...)
     updated_content = re.sub(pattern, author_line + r'\1', content, count=1)

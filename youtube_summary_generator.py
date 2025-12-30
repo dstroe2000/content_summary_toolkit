@@ -164,7 +164,6 @@ def process_youtube_entry(entry):
         generated/{title}.md containing:
 
         [{author_name}]({channel_url})
-
         [Link]({reference})
 
         ---
@@ -262,9 +261,7 @@ def process_youtube_entry(entry):
 
     # Create the content following the specified structure
     # Structure per specification:
-    # - Blank line
     # - [{author_name}]({channel_url})
-    # - Blank line
     # - [Link]({reference})
     # - Blank line
     # - ---
@@ -279,9 +276,7 @@ def process_youtube_entry(entry):
     # - Blank line
     # - {filtered extract_wisdom}
     # - Blank line
-    content = f"""
-[{author_name}]({channel_url})
-
+    content = f"""[{author_name}]({channel_url})
 [Link]({reference})
 
 ---

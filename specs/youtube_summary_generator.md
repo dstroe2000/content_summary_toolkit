@@ -38,9 +38,7 @@ cat "output/subtitle/{title}.txt" | fabric -p extract_wisdom
     - please make sure that the information under the <think></think> section is filtered out
 - you need to aggregate the information **author_name**, **channel_url**, **summary**, **youtube_summary**, and **extract_wisdom** that you obtained in the following structure:
 
-
 [{author_name}]({channel_url})
-
 [Link]({reference})
 
 ---
