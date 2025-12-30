@@ -23,6 +23,7 @@ Output:
 
 External Dependencies:
     - fabric: AI-powered text processing tool with -y flag and patterns (summarize, youtube_summary, extract_wisdom)
+    - yt-dlp: YouTube metadata extraction tool for retrieving channel information
 
 Example:
     python youtube_summary_generator.py "[Learn RAG From Scratch](https://www.youtube.com/watch?v=sVcwVQRHIc8)"
@@ -32,6 +33,7 @@ import subprocess
 import re
 import sys
 import os
+import yt_dlp
 
 
 def _filter_think_sections(text):
@@ -82,6 +84,63 @@ def _run_command(command):
         return ""
 
 
+def _get_youtube_channel_info(video_url):
+    """
+    Extract YouTube channel information from video URL using yt-dlp.
+
+    Prefers modern handle format (@username) over legacy channel ID format.
+
+    Args:
+        video_url (str): YouTube video URL
+
+    Returns:
+        tuple: (author_name, channel_url) or (None, None) if extraction fails
+
+    Example:
+        author, channel = _get_youtube_channel_info("https://www.youtube.com/watch?v=sVcwVQRHIc8")
+        # Returns: ("freeCodeCamp.org", "https://www.youtube.com/@freecodecamp")
+
+    Note:
+        Prefers handle format (https://www.youtube.com/@username) over
+        legacy channel ID format (https://www.youtube.com/channel/UC...)
+    """
+    try:
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': True,
+            'skip_download': True,
+        }
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_url, download=False)
+
+            # Get author name
+            author_name = info.get('uploader', info.get('channel', 'Unknown'))
+
+            # Try to get channel URL, preferring handle format over channel ID
+            channel_url = info.get('channel_url', '')
+            uploader_url = info.get('uploader_url', '')
+
+            # Prefer handle format (@username) over channel ID (UC...)
+            # Handle format contains '@', channel ID format contains '/channel/'
+            if uploader_url and '/@' in uploader_url:
+                # Modern handle format found in uploader_url
+                channel_url = uploader_url
+            elif channel_url and '/@' in channel_url:
+                # Modern handle format found in channel_url
+                pass  # Already using channel_url
+            elif uploader_url:
+                # Fallback to uploader_url if no handle found
+                channel_url = uploader_url
+            # else: keep channel_url as is (may be legacy format or empty)
+
+            return author_name, channel_url
+    except Exception as e:
+        print(f"Warning: Could not extract channel info: {e}")
+        return None, None
+
+
 def process_youtube_entry(entry):
     """
     Process a YouTube entry and generate summary file.
@@ -89,19 +148,22 @@ def process_youtube_entry(entry):
     Pipeline:
     1. Parse entry to extract title and reference (YouTube URL)
     2. Validate that reference is a YouTube URL
-    3. Ensure subtitle/ and generated/ folders exist (create if needed)
-    4. Get transcript via: fabric -y '{reference}' --transcript-with-timestamps > 'subtitle/{title}.txt'
-    5. Get summary via: cat 'subtitle/{title}.txt' | fabric -p summarize
-    6. Get YouTube summary via: cat 'subtitle/{title}.txt' | fabric -p youtube_summary
-    7. Get extract wisdom via: cat 'subtitle/{title}.txt' | fabric -p extract_wisdom
-    8. Filter <think></think> sections from all three summaries
-    9. Aggregate into structured markdown file
+    3. Extract YouTube channel information (author name and channel URL) using yt-dlp
+    4. Ensure subtitle/ and generated/ folders exist (create if needed)
+    5. Get transcript via: fabric -y '{reference}' --transcript-with-timestamps > 'subtitle/{title}.txt'
+    6. Get summary via: cat 'subtitle/{title}.txt' | fabric -p summarize
+    7. Get YouTube summary via: cat 'subtitle/{title}.txt' | fabric -p youtube_summary
+    8. Get extract wisdom via: cat 'subtitle/{title}.txt' | fabric -p extract_wisdom
+    9. Filter <think></think> sections from all three summaries
+    10. Aggregate into structured markdown file
 
     Args:
         entry (str): Markdown-formatted entry in format "[title](reference)"
 
     Output File Structure:
         generated/{title}.md containing:
+
+        [{author_name}]({channel_url})
 
         [Link]({reference})
 
@@ -147,6 +209,16 @@ def process_youtube_entry(entry):
 
     print(f"Processing: {title}")
 
+    # Extract YouTube channel information using yt-dlp
+    print("Extracting channel information...")
+    author_name, channel_url = _get_youtube_channel_info(reference)
+    if author_name and channel_url:
+        print(f"Channel: {author_name} ({channel_url})")
+    else:
+        print("Warning: Could not extract channel information, using defaults")
+        author_name = "Unknown"
+        channel_url = ""
+
     # Ensure output folders exist prior to generating files
     # Create subtitle/ and generated/ directories if they don't exist
     os.makedirs("output", exist_ok=True)
@@ -191,6 +263,8 @@ def process_youtube_entry(entry):
     # Create the content following the specified structure
     # Structure per specification:
     # - Blank line
+    # - [{author_name}]({channel_url})
+    # - Blank line
     # - [Link]({reference})
     # - Blank line
     # - ---
@@ -202,10 +276,11 @@ def process_youtube_entry(entry):
     # - {filtered youtube_summary}
     # - Blank line
     # - --- --- ---
-# - Blank line
+    # - Blank line
     # - {filtered extract_wisdom}
     # - Blank line
     content = f"""
+[{author_name}]({channel_url})
 
 [Link]({reference})
 
