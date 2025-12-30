@@ -25,11 +25,17 @@ This tool helps you process a backlog of content (YouTube videos and blog articl
 - [fabric](https://github.com/danielmiessler/fabric) - AI-powered text processing tool
   - Must be installed and configured with API access
   - Requires patterns: `summarize`, `youtube_summary`, `extract_wisdom`
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) - YouTube metadata extraction
+  - Used to extract channel information from YouTube videos
 
 ## Installation
 
 1. Clone this repository
-2. Ensure fabric is installed and configured:
+2. Install Python dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. Ensure fabric is installed and configured:
    ```bash
    # Install fabric (follow fabric's installation guide)
    # https://github.com/danielmiessler/fabric
@@ -106,10 +112,12 @@ output/
 
 ### YouTube Videos
 Each generated summary contains:
-1. Link to original video
-2. General summary
-3. YouTube-specific summary
-4. Extracted wisdom
+1. Channel author link (name and URL extracted via yt-dlp)
+   - Prefers modern handle format (`@username`) over legacy channel ID
+2. Link to original video
+3. General summary
+4. YouTube-specific summary
+5. Extracted wisdom
 
 ### Blog Articles
 Each generated summary contains:
@@ -148,9 +156,10 @@ The project consists of three main components:
    - Tracks statistics and generates reports
 
 2. **youtube_summary_generator.py**: YouTube processor
+   - Extracts channel information using `yt-dlp`
    - Downloads transcripts using `fabric -y`
    - Generates 3 types of summaries
-   - Creates structured markdown output
+   - Creates structured markdown output with channel attribution
 
 3. **blog_summary_generator.py**: Blog processor
    - Fetches blog content using `fabric -u`
