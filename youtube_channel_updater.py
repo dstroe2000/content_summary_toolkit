@@ -2,12 +2,13 @@
 YouTube Channel Updater
 
 This module updates existing YouTube summary markdown files by adding missing channel
-author information above the video link.
+author information and video descriptions.
 
 Purpose:
-    Updates files generated before the channel information feature was implemented.
-    Scans existing YouTube summary files and inserts the author/channel line above
-    the video link without modifying other content.
+    Updates files generated before the channel information and video description
+    features were implemented. Scans existing YouTube summary files and inserts:
+    - Author/channel line above the video link
+    - Video description after TOC section
 
 Usage:
     # Process default folder (output/yt_generated/)
@@ -22,8 +23,11 @@ Usage:
     # Verbose output
     python youtube_channel_updater.py --verbose
 
+    # Skip video description extraction (channel info only)
+    python youtube_channel_updater.py --skip-description
+
 External Dependencies:
-    - yt-dlp: YouTube metadata extraction tool for retrieving channel information
+    - yt-dlp: YouTube metadata and description extraction tool
 
 Example Output:
     ==================================================
@@ -34,6 +38,12 @@ Example Output:
     Already updated:        3
     No link found:          1
     Extraction failed:      1
+
+    Video descriptions:
+      Added:                15
+      Already exists:       8
+      Extraction failed:    2
+
     Success rate:           95.2%
     ==================================================
 """
@@ -42,6 +52,7 @@ import os
 import sys
 import re
 import argparse
+import subprocess
 import yt_dlp
 from pathlib import Path
 
@@ -102,6 +113,36 @@ def _get_youtube_channel_info(video_url):
         return None, None
 
 
+def _get_youtube_description(video_url):
+    """
+    Extract video description from YouTube URL using yt-dlp.
+
+    This retrieves the original description text written by the video creator.
+
+    Args:
+        video_url (str): YouTube video URL
+
+    Returns:
+        str: Video description text, or empty string if extraction fails
+
+    Example:
+        description = _get_youtube_description("https://www.youtube.com/watch?v=sVcwVQRHIc8")
+        # Returns: The video's description text as written by the creator
+
+    Implementation:
+        Runs: yt-dlp --get-description <video_url>
+    """
+    try:
+        command = f'yt-dlp --get-description "{video_url}"'
+        result = subprocess.run(command, shell=True, capture_output=True, text=True)
+        if result.returncode == 0:
+            return result.stdout.strip()
+        else:
+            return ""
+    except Exception as e:
+        return ""
+
+
 def _extract_youtube_link(content):
     """
     Extract YouTube video URL from markdown file content.
@@ -153,6 +194,44 @@ def _is_already_updated(content):
     return False
 
 
+def _has_video_description(content):
+    """
+    Check if file already has video description after TOC.
+
+    Looks for content between the TOC separator and the next section separator.
+    Pattern:
+        ### TOC
+        ...
+        ---
+
+        [content here]  ← If non-whitespace exists here, description exists
+
+        ---
+
+    Args:
+        content (str): Markdown file content
+
+    Returns:
+        bool: True if video description exists, False otherwise
+
+    Example:
+        if _has_video_description(content):
+            print("Description already exists, skipping")
+    """
+    # Find TOC section and the content after it
+    # Pattern: ### TOC ... --- [content] ---
+    pattern = r'### TOC.*?---\s*\n(.*?)\n---'
+    match = re.search(pattern, content, re.DOTALL)
+
+    if match:
+        between_separators = match.group(1).strip()
+        # If there's content between the separators, description exists
+        return len(between_separators) > 0
+
+    # No TOC found or pattern doesn't match
+    return False
+
+
 def _update_file_content(content, author_name, channel_url):
     """
     Insert channel author information above the video link.
@@ -188,9 +267,69 @@ def _update_file_content(content, author_name, channel_url):
     return updated_content
 
 
-def process_file(file_path, dry_run=False, verbose=False):
+def _insert_video_description(content, video_description):
     """
-    Process a single markdown file to add channel information.
+    Insert video description after TOC section.
+
+    Inserts the video description between the TOC separator and the next section.
+    Pattern:
+        ### TOC
+        ...
+        ---
+
+        {video_description}  ← INSERT HERE
+
+        ---
+
+    Args:
+        content (str): Original markdown file content
+        video_description (str): Video description text to insert
+
+    Returns:
+        str: Updated content with description inserted, or original content if TOC not found
+
+    Example:
+        Before:
+            ### TOC
+            - [[#SUMMARY]]
+
+            ---
+
+            # SUMMARY
+
+        After:
+            ### TOC
+            - [[#SUMMARY]]
+
+            ---
+
+            Video description text here...
+
+            ---
+
+            # SUMMARY
+    """
+    # Pattern to find TOC section followed by separator
+    # We want to insert after the "---" that follows "### TOC"
+    pattern = r'(### TOC.*?---)\s*\n'
+
+    # Check if pattern exists
+    if not re.search(pattern, content, re.DOTALL):
+        # No TOC found, return original content
+        return content
+
+    # Create the replacement: TOC section + separator + description + separator
+    replacement = r'\1\n\n' + video_description + '\n\n---\n'
+
+    # Replace only the first occurrence
+    updated_content = re.sub(pattern, replacement, content, count=1, flags=re.DOTALL)
+
+    return updated_content
+
+
+def process_file(file_path, dry_run=False, verbose=False, skip_description=False):
+    """
+    Process a single markdown file to add channel information and video description.
 
     Pipeline:
     1. Read file content
@@ -198,12 +337,15 @@ def process_file(file_path, dry_run=False, verbose=False):
     3. Check if already updated (skip if yes)
     4. Get channel info using yt-dlp
     5. Update file content with author line
-    6. Write back to file (unless dry-run mode)
+    6. Get video description using yt-dlp (unless skip_description=True)
+    7. Insert video description after TOC (if not already present)
+    8. Write back to file (unless dry-run mode)
 
     Args:
         file_path (str or Path): Path to markdown file to process
         dry_run (bool): If True, preview changes without modifying file
         verbose (bool): If True, print detailed processing information
+        skip_description (bool): If True, skip video description extraction
 
     Returns:
         dict: Processing result with keys:
@@ -211,6 +353,9 @@ def process_file(file_path, dry_run=False, verbose=False):
             - message: Description of what happened
             - author_name: Channel name (if successful)
             - channel_url: Channel URL (if successful)
+            - description_added: True if description was added
+            - description_exists: True if description already existed
+            - description_failed: True if description extraction failed
 
     Example:
         result = process_file("output/yt_generated/video.md", dry_run=True)
@@ -267,8 +412,50 @@ def process_file(file_path, dry_run=False, verbose=False):
             print(f"  Channel: {author_name}")
             print(f"  URL: {channel_url}")
 
-        # Update content
+        # Update content with channel info
         updated_content = _update_file_content(content, author_name, channel_url)
+
+        # Track description status
+        description_added = False
+        description_exists = False
+        description_failed = False
+
+        # Handle video description (unless skipped)
+        if not skip_description:
+            if verbose:
+                print("  Checking video description...")
+
+            # Check if description already exists
+            if _has_video_description(updated_content):
+                if verbose:
+                    print("  ✓ Description already exists")
+                description_exists = True
+            else:
+                # Extract video description
+                if verbose:
+                    print("  Fetching video description...")
+
+                video_description = _get_youtube_description(youtube_url)
+
+                if video_description:
+                    if verbose:
+                        print(f"  Description fetched ({len(video_description)} characters)")
+
+                    # Insert description after TOC
+                    updated_content = _insert_video_description(updated_content, video_description)
+
+                    # Check if insertion was successful (TOC exists)
+                    if _has_video_description(updated_content):
+                        description_added = True
+                        if verbose:
+                            print("  ✓ Description added")
+                    else:
+                        if verbose:
+                            print("  ⚠ No TOC found, skipping description")
+                else:
+                    description_failed = True
+                    if verbose:
+                        print("  ⚠ Failed to fetch description")
 
         # Write back to file (unless dry-run)
         if not dry_run:
@@ -284,7 +471,10 @@ def process_file(file_path, dry_run=False, verbose=False):
             'status': 'updated',
             'message': 'Successfully updated',
             'author_name': author_name,
-            'channel_url': channel_url
+            'channel_url': channel_url,
+            'description_added': description_added,
+            'description_exists': description_exists,
+            'description_failed': description_failed
         }
 
     except Exception as e:
@@ -296,17 +486,18 @@ def process_file(file_path, dry_run=False, verbose=False):
         }
 
 
-def process_folder(folder_path, dry_run=False, verbose=False):
+def process_folder(folder_path, dry_run=False, verbose=False, skip_description=False):
     """
     Process all markdown files in a folder.
 
     Scans the folder for .md files and processes each one to add
-    missing channel information.
+    missing channel information and video descriptions.
 
     Args:
         folder_path (str or Path): Path to folder containing markdown files
         dry_run (bool): If True, preview changes without modifying files
         verbose (bool): If True, print detailed processing information
+        skip_description (bool): If True, skip video description extraction
 
     Returns:
         dict: Summary statistics with keys:
@@ -316,6 +507,9 @@ def process_folder(folder_path, dry_run=False, verbose=False):
             - no_link: Number of files without YouTube links
             - extraction_failed: Number of files where channel extraction failed
             - errors: Number of files that had processing errors
+            - description_added: Number of files where description was added
+            - description_exists: Number of files that already have description
+            - description_failed: Number of files where description extraction failed
             - success_rate: Percentage of files successfully processed
 
     Example:
@@ -340,12 +534,17 @@ def process_folder(folder_path, dry_run=False, verbose=False):
             'no_link': 0,
             'extraction_failed': 0,
             'errors': 0,
+            'description_added': 0,
+            'description_exists': 0,
+            'description_failed': 0,
             'success_rate': 0.0
         }
 
     print(f"Found {len(md_files)} markdown file(s) in {folder_path}")
     if dry_run:
         print("Running in DRY-RUN mode - no files will be modified")
+    if skip_description:
+        print("Skipping video description extraction")
     print()
 
     # Statistics
@@ -355,16 +554,26 @@ def process_folder(folder_path, dry_run=False, verbose=False):
         'already_updated': 0,
         'no_link': 0,
         'extraction_failed': 0,
-        'errors': 0
+        'errors': 0,
+        'description_added': 0,
+        'description_exists': 0,
+        'description_failed': 0
     }
 
     # Process each file
     for file_path in md_files:
-        result = process_file(file_path, dry_run=dry_run, verbose=verbose)
+        result = process_file(file_path, dry_run=dry_run, verbose=verbose, skip_description=skip_description)
 
         # Update statistics
         if result['status'] == 'updated':
             stats['updated'] += 1
+            # Track description stats if applicable
+            if result.get('description_added'):
+                stats['description_added'] += 1
+            if result.get('description_exists'):
+                stats['description_exists'] += 1
+            if result.get('description_failed'):
+                stats['description_failed'] += 1
             if not verbose:
                 print(f"✓ Updated: {file_path.name}")
         elif result['status'] == 'already_updated':
@@ -394,16 +603,17 @@ def process_folder(folder_path, dry_run=False, verbose=False):
     return stats
 
 
-def print_summary(stats, dry_run=False):
+def print_summary(stats, dry_run=False, skip_description=False):
     """
     Print summary statistics after processing.
 
     Displays a formatted report of processing results including
-    total files, success count, failures, and success rate.
+    total files, success count, failures, description stats, and success rate.
 
     Args:
         stats (dict): Statistics dictionary from process_folder()
         dry_run (bool): If True, indicates this was a dry-run
+        skip_description (bool): If True, indicates descriptions were skipped
 
     Example:
         ==================================================
@@ -414,6 +624,12 @@ def print_summary(stats, dry_run=False):
         Already updated:        3
         No link found:          1
         Extraction failed:      1
+
+        Video descriptions:
+          Added:                15
+          Already exists:       8
+          Extraction failed:    2
+
         Success rate:           95.2%
         ==================================================
     """
@@ -428,6 +644,16 @@ def print_summary(stats, dry_run=False):
     print(f"No link found:          {stats['no_link']}")
     print(f"Extraction failed:      {stats['extraction_failed']}")
     print(f"Errors:                 {stats['errors']}")
+
+    # Show description stats only if not skipped
+    if not skip_description:
+        print()
+        print("Video descriptions:")
+        print(f"  Added:                {stats['description_added']}")
+        print(f"  Already exists:       {stats['description_exists']}")
+        print(f"  Extraction failed:    {stats['description_failed']}")
+
+    print()
     print(f"Success rate:           {stats['success_rate']:.1f}%")
     print("=" * 50)
 
@@ -442,14 +668,16 @@ def main():
         --folder: Path to folder containing markdown files (default: output/yt_generated/)
         --dry-run: Preview changes without modifying files
         --verbose: Print detailed processing information
+        --skip-description: Skip video description extraction
 
     Usage:
         python youtube_channel_updater.py
         python youtube_channel_updater.py --folder /path/to/folder
         python youtube_channel_updater.py --dry-run --verbose
+        python youtube_channel_updater.py --skip-description
     """
     parser = argparse.ArgumentParser(
-        description='Update existing YouTube summary files with channel information',
+        description='Update existing YouTube summary files with channel information and video descriptions',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -457,6 +685,7 @@ Examples:
   %(prog)s --folder /path/to/folder
   %(prog)s --dry-run
   %(prog)s --verbose --dry-run
+  %(prog)s --skip-description
         """
     )
 
@@ -479,17 +708,24 @@ Examples:
         help='Print detailed processing information'
     )
 
+    parser.add_argument(
+        '--skip-description',
+        action='store_true',
+        help='Skip video description extraction (only update channel info)'
+    )
+
     args = parser.parse_args()
 
     # Process folder
     stats = process_folder(
         folder_path=args.folder,
         dry_run=args.dry_run,
-        verbose=args.verbose
+        verbose=args.verbose,
+        skip_description=args.skip_description
     )
 
     # Print summary
-    print_summary(stats, dry_run=args.dry_run)
+    print_summary(stats, dry_run=args.dry_run, skip_description=args.skip_description)
 
 
 if __name__ == "__main__":

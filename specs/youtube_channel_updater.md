@@ -1,10 +1,15 @@
 # YouTube Channel Updater Specification
 
 ## Context
-I have existing YouTube summary files in the `output/yt_generated/` folder that were generated before the channel information feature was implemented. These files contain a YouTube link but are missing the author and channel information line above it.
+I have existing YouTube summary files in the `output/yt_generated/` folder that were generated before the channel information and video description features were implemented. These files may be missing:
+- The author and channel information line above the video link
+- The video description after the TOC section
 
 ## Goal
-Create a CLI application that updates existing YouTube summary markdown files by extracting the YouTube video URL and adding the missing channel author information above the video link.
+Create a CLI application that updates existing YouTube summary markdown files by:
+1. Extracting the YouTube video URL
+2. Adding the missing channel author information above the video link
+3. Adding the video description after the TOC section (if TOC exists)
 
 ## Input
 - **Folder path**: Path to the folder containing existing YouTube summary files (default: `output/yt_generated/`)
@@ -12,26 +17,61 @@ Create a CLI application that updates existing YouTube summary markdown files by
 
 ## Expected File Structure (Before Update)
 
-Current files have this structure:
+Files may have one of these structures:
+
+**Structure 1** (Missing channel info only):
 ```markdown
 
 [Link](https://www.youtube.com/watch?v=VIDEO_ID)
 
 ---
 
+### TOC
+- [[#SUMMARY]]
+
+---
+
+# SUMMARY
+{summary content}
+...
+```
+
+**Structure 2** (Missing both channel info and description):
+```markdown
+
+[Link](https://www.youtube.com/watch?v=VIDEO_ID)
+
+---
+
+### TOC
+- [[#SUMMARY]]
+
+---
+
+# SUMMARY
 {summary content}
 ...
 ```
 
 ## Desired File Structure (After Update)
 
-Updated files should have this structure:
+Updated files should have this complete structure:
 ```markdown
 [{author_name}]({channel_url})
 [Link](https://www.youtube.com/watch?v=VIDEO_ID)
 
 ---
 
+### TOC
+- [[#SUMMARY]]
+
+---
+
+{video_description}
+
+---
+
+# SUMMARY
 {summary content}
 ...
 ```
@@ -48,10 +88,10 @@ For each markdown file in the target folder:
    - Extract the YouTube URL from the round brackets
    - If no YouTube link found, skip the file and log a warning
 
-3. **Check if already updated**
+3. **Check if channel info already exists**
    - Check if there's already content on the line immediately before `[Link](...)`
    - If a non-empty line exists before `[Link](...)`, assume file is already updated and skip it
-   - This prevents duplicate updates
+   - This prevents duplicate channel info updates
 
 4. **Extract channel information using yt-dlp**
    - Use yt-dlp to extract channel metadata from the video URL
@@ -60,20 +100,36 @@ For each markdown file in the target folder:
    - **Prefer handle format** (`https://www.youtube.com/@username`) over legacy channel ID format
    - If extraction fails, log error and skip the file
 
-5. **Update file content**
+5. **Update file content with channel info**
    - Insert `[{author_name}]({channel_url})` on a new line
    - Place it immediately before the existing `[Link](...)`  line
    - Preserve all other content exactly as is
    - No blank line between author line and link line
 
-6. **Write updated content back to file**
+6. **Extract video description using yt-dlp** (unless --skip-description flag is set)
+   - Use yt-dlp to extract video description: `yt-dlp --get-description <video_url>`
+   - Get the original description text written by the video creator
+   - If extraction fails, log warning and continue (non-fatal)
+
+7. **Check if description already exists**
+   - Look for content between the TOC separator and the next section
+   - Pattern: `### TOC ... --- [content] ---`
+   - If content exists between separators, description already present, skip
+
+8. **Insert video description** (if not already present and TOC exists)
+   - Find the TOC section: `### TOC ... ---`
+   - Insert description after the TOC separator
+   - Add separators: `--- {description} ---`
+   - If no TOC section found, skip description insertion
+
+9. **Write updated content back to file**
    - Overwrite the original file with updated content
    - Use UTF-8 encoding
 
-7. **Report progress**
-   - Log each file being processed
-   - Show success/failure status
-   - Provide final summary statistics
+10. **Report progress**
+    - Log each file being processed
+    - Show success/failure status for both channel info and description
+    - Provide final summary statistics
 
 ## Command-Line Interface
 
@@ -82,6 +138,7 @@ For each markdown file in the target folder:
 python youtube_channel_updater.py
 ```
 This processes all `.md` files in `output/yt_generated/` folder (default)
+Updates both channel info and video descriptions
 
 ### With Custom Folder
 ```bash
@@ -100,6 +157,13 @@ python youtube_channel_updater.py --verbose
 ```
 Shows detailed processing information for each file
 
+### Skip Description Mode
+```bash
+python youtube_channel_updater.py --skip-description
+```
+Only updates channel information, skips video description extraction
+Useful when you only want to add author/channel lines
+
 ## Output Report
 
 After processing completes, display a summary:
@@ -113,9 +177,17 @@ Successfully updated:   20
 Already updated:        3
 No link found:          1
 Extraction failed:      1
+
+Video descriptions:
+  Added:                15
+  Already exists:       8
+  Extraction failed:    2
+
 Success rate:           95.2%
 ==================================================
 ```
+
+Note: Video description stats are only shown when `--skip-description` is NOT used.
 
 ## Error Handling
 
@@ -128,10 +200,14 @@ Success rate:           95.2%
 ## Edge Cases
 
 1. **Files without YouTube links**: Skip and log
-2. **Files already updated**: Detect and skip (avoid duplicates)
-3. **Malformed markdown**: Handle gracefully, log warning
-4. **Network issues during yt-dlp**: Retry once, then skip if fails
-5. **Empty files**: Skip and log
+2. **Files already updated** (channel info): Detect and skip (avoid duplicates)
+3. **Files with description already present**: Detect and skip description insertion
+4. **Files without TOC section**: Skip description insertion, only update channel info
+5. **Malformed markdown**: Handle gracefully, log warning
+6. **Network issues during yt-dlp**: Retry once, then skip if fails
+7. **Empty files**: Skip and log
+8. **Empty video description**: Don't insert if description is empty/whitespace only
+9. **Description extraction fails**: Log warning, continue with channel update (non-fatal)
 
 ## Dependencies
 
@@ -148,6 +224,19 @@ Success rate:           95.2%
 
 ---
 
+### TOC
+- [[#ONE SENTENCE SUMMARY]]
+- [[#SUMMARY]]
+
+---
+
+# ONE SENTENCE SUMMARY
+This video teaches RAG from scratch...
+
+---
+---
+---
+
 # SUMMARY
 This video teaches RAG from scratch...
 ```
@@ -157,6 +246,24 @@ This video teaches RAG from scratch...
 [freeCodeCamp.org](https://www.youtube.com/@freecodecamp)
 [Link](https://www.youtube.com/watch?v=sVcwVQRHIc8)
 
+---
+
+### TOC
+- [[#ONE SENTENCE SUMMARY]]
+- [[#SUMMARY]]
+
+---
+
+Learn how to build a Retrieval Augmented Generation (RAG) system from scratch in Python!
+This comprehensive course teaches the fundamentals...
+
+---
+
+# ONE SENTENCE SUMMARY
+This video teaches RAG from scratch...
+
+---
+---
 ---
 
 # SUMMARY
