@@ -194,19 +194,100 @@ def _is_already_updated(content):
     return False
 
 
+def _extract_headers(content):
+    """
+    Extract the 3 main section headers from AI-generated content.
+
+    Extracts only the main headers from the 3 fabric-generated sections:
+    1. ONE SENTENCE SUMMARY (from fabric -p summarize)
+    2. Summary: {title} (from fabric -p youtube_summary)
+    3. SUMMARY (from fabric -p extract_wisdom)
+
+    These sections are separated by triple separators (---\n---\n---).
+
+    Args:
+        content (str): Markdown file content
+
+    Returns:
+        list: List of 3 main header texts (without # and trailing colons)
+
+    Example:
+        headers = _extract_headers(content)
+        # Returns: ['ONE SENTENCE SUMMARY', 'Summary: Title', 'SUMMARY']
+    """
+    headers = []
+
+    # Split content by triple separator to get the 3 main sections
+    # Pattern: ---\n---\n--- (with possible whitespace)
+    triple_sep_pattern = r'---\s*\n---\s*\n---'
+    sections = re.split(triple_sep_pattern, content)
+
+    # Structure:
+    # sections[0] = channel + link + description + ONE SENTENCE SUMMARY section
+    # sections[1] = Summary: Title section (from youtube_summary)
+    # sections[2] = SUMMARY section (from extract_wisdom)
+
+    if len(sections) < 3:
+        # Old format or different structure, fallback to extracting first 3 headers
+        for line in content.split('\n'):
+            match = re.match(r'^#\s+(.+)$', line.strip())
+            if match:
+                header_text = match.group(1)
+                header_text = re.sub(r':+\s*$', '', header_text).strip()
+                headers.append(header_text)
+                if len(headers) >= 3:
+                    break
+        return headers[:3]
+
+    # Extract first level 1 header from each of the 3 sections
+    # Start from sections[0] to get the first header (ONE SENTENCE SUMMARY)
+    for i in range(0, min(3, len(sections))):
+        section = sections[i]
+        for line in section.split('\n'):
+            match = re.match(r'^#\s+(.+)$', line.strip())
+            if match:
+                header_text = match.group(1)
+                header_text = re.sub(r':+\s*$', '', header_text).strip()
+                headers.append(header_text)
+                break  # Only get first header from each section
+
+    return headers[:3]  # Ensure we only return 3 headers
+
+
+def _has_toc(content):
+    """
+    Check if file already has a TOC section.
+
+    Args:
+        content (str): Markdown file content
+
+    Returns:
+        bool: True if TOC exists, False otherwise
+
+    Example:
+        if _has_toc(content):
+            print("TOC already exists")
+    """
+    return bool(re.search(r'### TOC', content))
+
+
 def _has_video_description(content):
     """
     Check if file already has video description after TOC.
 
-    Looks for content between the TOC separator and the next section separator.
+    Looks for content between the TOC separator and the next section.
+    The description is text that comes after TOC but before the first main header (#).
+
     Pattern:
         ### TOC
         ...
         ---
 
-        [content here]  ← If non-whitespace exists here, description exists
+        [description text]  ← If exists and doesn't start with #, description exists
 
         ---
+
+        # HEADER
 
     Args:
         content (str): Markdown file content
@@ -219,17 +300,87 @@ def _has_video_description(content):
             print("Description already exists, skipping")
     """
     # Find TOC section and the content after it
-    # Pattern: ### TOC ... --- [content] ---
-    pattern = r'### TOC.*?---\s*\n(.*?)\n---'
+    # Pattern: ### TOC ... --- (content) ---  # HEADER
+    pattern = r'### TOC.*?---\s*\n+(.*?)(?=\n#|\n---)'
     match = re.search(pattern, content, re.DOTALL)
 
     if match:
         between_separators = match.group(1).strip()
-        # If there's content between the separators, description exists
-        return len(between_separators) > 0
+        # Check if there's content AND it's not a header (doesn't start with #)
+        if between_separators and not between_separators.startswith('#'):
+            # This is actual description content
+            return True
 
-    # No TOC found or pattern doesn't match
+    # No description found
     return False
+
+
+def _insert_toc(content, headers):
+    """
+    Insert Table of Contents after the first --- separator.
+
+    Creates a TOC from the provided headers and inserts it after the first
+    horizontal rule (---) in the content.
+
+    Args:
+        content (str): Original markdown file content
+        headers (list): List of header texts to include in TOC
+
+    Returns:
+        str: Updated content with TOC inserted
+
+    Example:
+        Before:
+            [Channel](url)
+            [Link](url)
+
+            ---
+
+            # ONE SENTENCE SUMMARY:
+            ...
+
+        After:
+            [Channel](url)
+            [Link](url)
+
+            ---
+
+            ### TOC
+            - [[#ONE SENTENCE SUMMARY]]
+
+            ---
+
+            # ONE SENTENCE SUMMARY:
+            ...
+    """
+    if not headers:
+        # No headers found, return original content
+        return content
+
+    # Build TOC content
+    toc_lines = ["### TOC"]
+    for header in headers:
+        toc_lines.append(f"- [[#{header}]]")
+    toc_content = "\n".join(toc_lines)
+
+    # Pattern to find the first --- separator
+    # We want to insert after it
+    pattern = r'(---)\s*\n'
+
+    # Find first occurrence
+    match = re.search(pattern, content)
+    if not match:
+        # No separator found, return original content
+        return content
+
+    # Insert TOC after the first ---
+    # replacement: --- + newline + TOC + newline + ---
+    replacement = r'\1\n\n' + toc_content + '\n\n---\n'
+
+    # Replace only the first occurrence
+    updated_content = re.sub(pattern, replacement, content, count=1)
+
+    return updated_content
 
 
 def _update_file_content(content, author_name, channel_url):
@@ -277,7 +428,7 @@ def _insert_video_description(content, video_description):
         ...
         ---
 
-        {video_description}  ← INSERT HERE
+        {video_description}
 
         ---
 
@@ -318,8 +469,8 @@ def _insert_video_description(content, video_description):
         # No TOC found, return original content
         return content
 
-    # Create the replacement: TOC section + separator + description + separator
-    replacement = r'\1\n\n' + video_description + '\n\n---\n'
+    # Create the replacement: TOC section + separator + blank line + description + blank line + separator + blank line
+    replacement = r'\1\n\n' + video_description + '\n\n---\n\n'
 
     # Replace only the first occurrence
     updated_content = re.sub(pattern, replacement, content, count=1, flags=re.DOTALL)
@@ -334,12 +485,9 @@ def process_file(file_path, dry_run=False, verbose=False, skip_description=False
     Pipeline:
     1. Read file content
     2. Extract YouTube video URL
-    3. Check if already updated (skip if yes)
-    4. Get channel info using yt-dlp
-    5. Update file content with author line
-    6. Get video description using yt-dlp (unless skip_description=True)
-    7. Insert video description after TOC (if not already present)
-    8. Write back to file (unless dry-run mode)
+    3. Check and update channel info (if missing)
+    4. Check and update video description (if missing and not skipped)
+    5. Write back to file if any updates were made (unless dry-run mode)
 
     Args:
         file_path (str or Path): Path to markdown file to process
@@ -353,6 +501,7 @@ def process_file(file_path, dry_run=False, verbose=False, skip_description=False
             - message: Description of what happened
             - author_name: Channel name (if successful)
             - channel_url: Channel URL (if successful)
+            - channel_added: True if channel info was added
             - description_added: True if description was added
             - description_exists: True if description already existed
             - description_failed: True if description extraction failed
@@ -385,43 +534,71 @@ def process_file(file_path, dry_run=False, verbose=False, skip_description=False
         if verbose:
             print(f"  Found video: {youtube_url}")
 
-        # Check if already updated
-        if _is_already_updated(content):
-            if verbose:
-                print("  ✓ Already updated, skipping")
-            return {
-                'status': 'already_updated',
-                'message': 'File already has channel information'
-            }
+        # Start with original content
+        updated_content = content
 
-        # Get channel information
-        if verbose:
-            print("  Fetching channel info...")
-
-        author_name, channel_url = _get_youtube_channel_info(youtube_url)
-
-        if not author_name or not channel_url:
-            if verbose:
-                print("  ✗ Failed to extract channel info")
-            return {
-                'status': 'extraction_failed',
-                'message': f'Failed to extract channel info for {youtube_url}'
-            }
-
-        if verbose:
-            print(f"  Channel: {author_name}")
-            print(f"  URL: {channel_url}")
-
-        # Update content with channel info
-        updated_content = _update_file_content(content, author_name, channel_url)
-
-        # Track description status
+        # Track what was updated
+        channel_added = False
         description_added = False
         description_exists = False
         description_failed = False
+        author_name = None
+        channel_url = None
 
-        # Handle video description (unless skipped)
+        # Check and update channel info
+        if _is_already_updated(content):
+            if verbose:
+                print("  ✓ Channel info already exists")
+        else:
+            # Get channel information
+            if verbose:
+                print("  Fetching channel info...")
+
+            author_name, channel_url = _get_youtube_channel_info(youtube_url)
+
+            if not author_name or not channel_url:
+                if verbose:
+                    print("  ✗ Failed to extract channel info")
+                return {
+                    'status': 'extraction_failed',
+                    'message': f'Failed to extract channel info for {youtube_url}'
+                }
+
+            if verbose:
+                print(f"  Channel: {author_name}")
+                print(f"  URL: {channel_url}")
+
+            # Update content with channel info
+            updated_content = _update_file_content(updated_content, author_name, channel_url)
+            channel_added = True
+            if verbose:
+                print("  ✓ Channel info added")
+
+        # Handle TOC and video description (unless skipped)
+        toc_added = False
         if not skip_description:
+            # Step 1: Check and insert TOC if missing
+            if not _has_toc(updated_content):
+                if verbose:
+                    print("  TOC not found, generating...")
+
+                # Extract headers from content
+                headers = _extract_headers(updated_content)
+
+                if headers:
+                    # Insert TOC
+                    updated_content = _insert_toc(updated_content, headers)
+                    toc_added = True
+                    if verbose:
+                        print(f"  ✓ TOC added with {len(headers)} headers")
+                else:
+                    if verbose:
+                        print("  ⚠ No headers found, cannot create TOC")
+            else:
+                if verbose:
+                    print("  ✓ TOC already exists")
+
+            # Step 2: Check and insert video description
             if verbose:
                 print("  Checking video description...")
 
@@ -451,11 +628,29 @@ def process_file(file_path, dry_run=False, verbose=False, skip_description=False
                             print("  ✓ Description added")
                     else:
                         if verbose:
-                            print("  ⚠ No TOC found, skipping description")
+                            print("  ⚠ Could not insert description (no TOC)")
                 else:
                     description_failed = True
                     if verbose:
                         print("  ⚠ Failed to fetch description")
+
+        # Determine if anything was updated
+        something_updated = channel_added or toc_added or description_added
+
+        if not something_updated:
+            # Nothing was updated
+            if verbose:
+                print("  - No updates needed")
+            return {
+                'status': 'already_updated',
+                'message': 'File already has all available information',
+                'author_name': author_name,
+                'channel_url': channel_url,
+                'channel_added': False,
+                'description_added': False,
+                'description_exists': description_exists,
+                'description_failed': description_failed
+            }
 
         # Write back to file (unless dry-run)
         if not dry_run:
@@ -472,6 +667,7 @@ def process_file(file_path, dry_run=False, verbose=False, skip_description=False
             'message': 'Successfully updated',
             'author_name': author_name,
             'channel_url': channel_url,
+            'channel_added': channel_added,
             'description_added': description_added,
             'description_exists': description_exists,
             'description_failed': description_failed
