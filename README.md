@@ -15,7 +15,12 @@ This tool helps you process a backlog of content (YouTube videos and blog articl
   - General summary
   - YouTube-specific summary (for videos)
   - Extracted wisdom and insights
+- **Rich Metadata Extraction**:
+  - Channel information with modern handle format (`@username`)
+  - Video descriptions from creators
+  - Auto-generated Table of Contents (TOC)
 - **Organized Output**: Structured folder hierarchy for easy navigation
+- **Batch Updater**: Update existing files with missing channel info and descriptions
 - **Comprehensive Reporting**: Detailed statistics and success metrics
 - **Error Resilient**: Continues processing even if individual entries fail
 
@@ -61,6 +66,23 @@ python youtube_summary_generator.py '[Learn RAG From Scratch](https://www.youtub
 Process a single blog article:
 ```bash
 python blog_summary_generator.py '[Article Title](https://example.com/article)'
+```
+
+### Updating Existing Files
+
+Update existing YouTube summary files with missing channel info and video descriptions:
+```bash
+# Update all files in default folder (output/yt_generated/)
+python youtube_channel_updater.py
+
+# Preview changes without modifying files
+python youtube_channel_updater.py --dry-run --verbose
+
+# Update only channel info (skip video descriptions)
+python youtube_channel_updater.py --skip-description
+
+# Update files in custom folder
+python youtube_channel_updater.py --folder /path/to/folder
 ```
 
 ## Batch File Format
@@ -112,12 +134,50 @@ output/
 
 ### YouTube Videos
 Each generated summary contains:
-1. Channel author link (name and URL extracted via yt-dlp)
+1. **Channel author link** (name and URL extracted via yt-dlp)
    - Prefers modern handle format (`@username`) over legacy channel ID
-2. Link to original video
-3. General summary
-4. YouTube-specific summary
-5. Extracted wisdom
+2. **Link to original video**
+3. **Table of Contents** - Auto-generated from section headers
+4. **Video Description** - Original description from the creator
+5. **General summary** - AI-generated overview
+6. **YouTube-specific summary** - Detailed breakdown
+7. **Extracted wisdom** - Key insights and takeaways
+
+**Example Output Structure:**
+```markdown
+[Channel Name](https://www.youtube.com/@channelname)
+[Link](https://www.youtube.com/watch?v=VIDEO_ID)
+
+---
+
+### TOC
+- [[#ONE SENTENCE SUMMARY]]
+- [[#Summary: Title]]
+- [[#SUMMARY]]
+
+---
+
+Video description text here...
+
+---
+
+# ONE SENTENCE SUMMARY:
+...
+
+---
+---
+---
+
+# Summary: Title
+...
+
+---
+---
+---
+
+# SUMMARY
+...
+```
 
 ### Blog Articles
 Each generated summary contains:
@@ -148,7 +208,7 @@ Total time:           5 min 23.45 sec
 
 ## Architecture
 
-The project consists of three main components:
+The project consists of four main components:
 
 1. **fabric_backlog.py**: Main orchestrator
    - Parses batch files
@@ -157,14 +217,23 @@ The project consists of three main components:
 
 2. **youtube_summary_generator.py**: YouTube processor
    - Extracts channel information using `yt-dlp`
+   - Extracts video descriptions using `yt-dlp --get-description`
    - Downloads transcripts using `fabric -y`
+   - Generates Table of Contents from section headers
    - Generates 3 types of summaries
-   - Creates structured markdown output with channel attribution
+   - Creates structured markdown output with full metadata
 
 3. **blog_summary_generator.py**: Blog processor
    - Fetches blog content using `fabric -u`
    - Generates 2 types of summaries
    - Creates structured markdown output
+
+4. **youtube_channel_updater.py**: Batch updater for existing files
+   - Scans existing YouTube summary files
+   - Adds missing channel information
+   - Adds missing video descriptions after TOC
+   - Supports dry-run mode for preview
+   - Provides detailed update statistics
 
 ## Error Handling
 
@@ -188,6 +257,7 @@ This project uses detailed specifications in the `specs/` folder:
 - `specs/top_level.md` - Batch processor specification
 - `specs/youtube_summary_generator.md` - YouTube processing specification
 - `specs/blog_summary_generator.md` - Blog processing specification
+- `specs/youtube_channel_updater.md` - YouTube updater specification
 
 ## License
 
