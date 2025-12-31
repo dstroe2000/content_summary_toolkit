@@ -11,19 +11,23 @@ Entry Format:
     - reference: The YouTube URL under round brackets (reference)
 
 Output:
-    Creates two folders if they don't exist:
-    - subtitle/ for storing YouTube subtitle files
-    - generated/ for storing generated markdown files
+    Creates three folders if they don't exist:
+    - output/ for all outputs
+    - output/subtitle/ for storing YouTube subtitle files
+    - output/yt_generated/ for storing generated markdown files
 
-    Creates a markdown file named "generated/{title}.md" containing:
+    Creates a markdown file named "output/yt_generated/{title}.md" containing:
+    - Channel name and URL
     - Link to the original video
+    - Table of Contents
+    - Video description (original creator's description via yt-dlp)
     - Filtered summary (from fabric -p summarize)
     - Filtered YouTube summary (from fabric -p youtube_summary)
     - Filtered extract wisdom (from fabric -p extract_wisdom)
 
 External Dependencies:
     - fabric: AI-powered text processing tool with -y flag and patterns (summarize, youtube_summary, extract_wisdom)
-    - yt-dlp: YouTube metadata extraction tool for retrieving channel information
+    - yt-dlp: YouTube metadata and description extraction tool
 
 Example:
     python youtube_summary_generator.py "[Learn RAG From Scratch](https://www.youtube.com/watch?v=sVcwVQRHIc8)"
@@ -206,6 +210,39 @@ def _get_youtube_channel_info(video_url):
         return None, None
 
 
+def _get_youtube_description(video_url):
+    """
+    Extract video description from YouTube URL using yt-dlp.
+
+    This retrieves the original description text written by the video creator.
+
+    Args:
+        video_url (str): YouTube video URL
+
+    Returns:
+        str: Video description text, or empty string if extraction fails
+
+    Example:
+        description = _get_youtube_description("https://www.youtube.com/watch?v=sVcwVQRHIc8")
+        # Returns: The video's description text as written by the creator
+
+    Implementation:
+        Runs: yt-dlp --get-description <video_url>
+    """
+    try:
+        command = f'yt-dlp --get-description "{video_url}"'
+        result = subprocess.run(command, shell=True, capture_output=True, text=True)
+        if result.returncode == 0:
+            return result.stdout.strip()
+        else:
+            print(f"Warning: Could not extract video description")
+            print(f"Error output: {result.stderr}")
+            return ""
+    except Exception as e:
+        print(f"Warning: Could not extract video description: {e}")
+        return ""
+
+
 def process_youtube_entry(entry):
     """
     Process a YouTube entry and generate summary file.
@@ -214,13 +251,15 @@ def process_youtube_entry(entry):
     1. Parse entry to extract title and reference (YouTube URL)
     2. Validate that reference is a YouTube URL
     3. Extract YouTube channel information (author name and channel URL) using yt-dlp
-    4. Ensure subtitle/ and generated/ folders exist (create if needed)
-    5. Get transcript via: fabric -y '{reference}' --transcript-with-timestamps > 'subtitle/{title}.txt'
-    6. Get summary via: cat 'subtitle/{title}.txt' | fabric -p summarize
-    7. Get YouTube summary via: cat 'subtitle/{title}.txt' | fabric -p youtube_summary
-    8. Get extract wisdom via: cat 'subtitle/{title}.txt' | fabric -p extract_wisdom
-    9. Filter <think></think> sections from all three summaries
-    10. Aggregate into structured markdown file
+    4. Extract video description using yt-dlp
+    5. Ensure subtitle/ and generated/ folders exist (create if needed)
+    6. Get transcript via: fabric -y '{reference}' --transcript-with-timestamps > 'subtitle/{title}.txt'
+    7. Get summary via: cat 'subtitle/{title}.txt' | fabric -p summarize
+    8. Get YouTube summary via: cat 'subtitle/{title}.txt' | fabric -p youtube_summary
+    9. Get extract wisdom via: cat 'subtitle/{title}.txt' | fabric -p extract_wisdom
+    10. Filter <think></think> sections from all three summaries
+    11. Generate Table of Contents from section headers
+    12. Aggregate into structured markdown file
 
     Args:
         entry (str): Markdown-formatted entry in format "[title](reference)"
@@ -230,6 +269,17 @@ def process_youtube_entry(entry):
 
         [{author_name}]({channel_url})
         [Link]({reference})
+
+        ---
+
+        ### TOC
+        - [[#ONE SENTENCE SUMMARY]]
+        - [[#Summary: {title}]]
+        - [[#SUMMARY]]
+
+        ---
+
+        {video_description}
 
         ---
 
@@ -282,6 +332,15 @@ def process_youtube_entry(entry):
         print("Warning: Could not extract channel information, using defaults")
         author_name = "Unknown"
         channel_url = ""
+
+    # Extract video description using yt-dlp
+    print("Extracting video description...")
+    video_description = _get_youtube_description(reference)
+    if video_description:
+        print(f"Description extracted ({len(video_description)} characters)")
+    else:
+        print("Warning: Could not extract video description")
+        video_description = ""
 
     # Ensure output folders exist prior to generating files
     # Create subtitle/ and generated/ directories if they don't exist
@@ -354,11 +413,14 @@ def process_youtube_entry(entry):
     # Build TOC section only if we have headers
     toc_section = f"\n{toc_content}\n\n---\n" if toc_content else ""
 
+    # Build video description section if available
+    description_section = f"\n{video_description}\n\n---\n" if video_description else ""
+
     content = f"""[{author_name}]({channel_url})
 [Link]({reference})
 
 ---
-{toc_section}
+{toc_section}{description_section}
 {filtered_summary}
 
 ---

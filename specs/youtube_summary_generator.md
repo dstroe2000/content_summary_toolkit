@@ -27,6 +27,10 @@ fabric -y "{reference}" --transcript-with-timestamps > "output/subtitle/{title}.
     - This can be done using yt-dlp or by parsing the YouTube video metadata
     - **Prefer handle format** (https://www.youtube.com/@username) over legacy channel ID format (https://www.youtube.com/channel/UC...)
     - Store these as variables: **author_name** and **channel_url**
+- The **video_description** (creator's original description) should be extracted using yt-dlp:
+    - Run: `yt-dlp --get-description "{reference}"`
+    - Store the result as variable: **video_description**
+    - This provides the original description written by the video creator
 - The **summary** of the content is obtain by running this bash command
 cat "output/subtitle/{title}.txt" | fabric -p summarize
     - please make sure that the information under the <think></think> section is filtered out
@@ -36,18 +40,32 @@ cat "output/subtitle/{title}.txt" | fabric -p youtube_summary
 - The **extract_wisdom** of the content is obtain by running this bash command
 cat "output/subtitle/{title}.txt" | fabric -p extract_wisdom
     - please make sure that the information under the <think></think> section is filtered out
-- you need to aggregate the information **author_name**, **channel_url**, **summary**, **youtube_summary**, and **extract_wisdom** that you obtained in the following structure:
+- you need to aggregate the information **author_name**, **channel_url**, **video_description**, **summary**, **youtube_summary**, and **extract_wisdom** that you obtained in the following structure:
 
 [{author_name}]({channel_url})
 [Link]({reference})
 
 ---
 
+### TOC
+- [[#ONE SENTENCE SUMMARY]]
+- [[#Summary: {title}]]
+- [[#SUMMARY]]
+
+---
+
+{video_description}
+
+---
+
+# ONE SENTENCE SUMMARY:
 {filtered summary}
 
 ---
 ---
 ---
+
+# Summary: {title}
 
 {filtered youtube_summary}
 
@@ -55,6 +73,7 @@ cat "output/subtitle/{title}.txt" | fabric -p extract_wisdom
 ---
 ---
 
+# SUMMARY
 {filtered extract_wisdom}
 
 ### HowTo Generate
