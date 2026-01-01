@@ -17,7 +17,7 @@ External Dependencies:
     - blog_summary_generator: Provides process_blog_entry() function
 
 Example:
-    python fabric_backlog.py batch_entries.txt
+    python content_summary_toolkit.py batch_entries.txt
 """
 
 import sys
