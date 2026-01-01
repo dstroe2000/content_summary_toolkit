@@ -20,7 +20,7 @@ This tool helps you process a backlog of content (YouTube videos and blog articl
   - Video descriptions from creators
   - Auto-generated Table of Contents (TOC)
 - **Organized Output**: Structured folder hierarchy for easy navigation
-- **Batch Updater**: Update existing files with missing channel info and descriptions
+- **Legacy Patcher**: Patch existing files with missing channel info and descriptions
 - **Comprehensive Reporting**: Detailed statistics and success metrics
 - **Error Resilient**: Continues processing even if individual entries fail
 
@@ -68,21 +68,21 @@ Process a single blog article:
 python blog_summary_generator.py '[Article Title](https://example.com/article)'
 ```
 
-### Updating Existing Files
+### Patching Legacy Files
 
-Update existing YouTube summary files with missing channel info and video descriptions:
+Patch existing YouTube summary files with missing channel info and video descriptions:
 ```bash
-# Update all files in default folder (output/yt_generated/)
-python youtube_channel_updater.py
+# Patch all files in default folder (output/yt_generated/)
+python youtube_summary_patcher.py
 
 # Preview changes without modifying files
-python youtube_channel_updater.py --dry-run --verbose
+python youtube_summary_patcher.py --dry-run --verbose
 
 # Update only channel info (skip video descriptions)
-python youtube_channel_updater.py --skip-description
+python youtube_summary_patcher.py --skip-description
 
-# Update files in custom folder
-python youtube_channel_updater.py --folder /path/to/folder
+# Patch files in custom folder
+python youtube_summary_patcher.py --folder /path/to/folder
 ```
 
 ## Batch File Format
@@ -228,12 +228,13 @@ The project consists of four main components:
    - Generates 2 types of summaries
    - Creates structured markdown output
 
-4. **youtube_channel_updater.py**: Batch updater for existing files
-   - Scans existing YouTube summary files
+4. **youtube_summary_patcher.py**: Legacy file patcher
+   - Patches existing YouTube summary files to current format
    - Adds missing channel information
+   - Generates TOC from existing headers
    - Adds missing video descriptions after TOC
    - Supports dry-run mode for preview
-   - Provides detailed update statistics
+   - Provides detailed patch statistics
 
 ## Error Handling
 
@@ -257,7 +258,7 @@ This project uses detailed specifications in the `specs/` folder:
 - `specs/top_level.md` - Batch processor specification
 - `specs/youtube_summary_generator.md` - YouTube processing specification
 - `specs/blog_summary_generator.md` - Blog processing specification
-- `specs/youtube_channel_updater.md` - YouTube updater specification
+- `specs/youtube_summary_patcher.md` - YouTube patcher specification
 
 ## License
 

@@ -1,15 +1,17 @@
-# YouTube Channel Updater Specification
+# YouTube Summary Patcher Specification
 
 ## Context
-I have existing YouTube summary files in the `output/yt_generated/` folder that were generated before the channel information and video description features were implemented. These files may be missing:
+I have existing YouTube summary files in the `output/yt_generated/` folder that were generated before the channel information, TOC, and video description features were implemented. These legacy files may be missing:
 - The author and channel information line above the video link
+- The Table of Contents (TOC) section
 - The video description after the TOC section
 
 ## Goal
-Create a CLI application that updates existing YouTube summary markdown files by:
+Create a CLI application that patches existing YouTube summary markdown files to the current format by:
 1. Extracting the YouTube video URL
 2. Adding the missing channel author information above the video link
-3. Adding the video description after the TOC section (if TOC exists)
+3. Generating and inserting TOC from existing headers (if missing)
+4. Adding the video description after the TOC section
 
 ## Input
 - **Folder path**: Path to the folder containing existing YouTube summary files (default: `output/yt_generated/`)
@@ -135,33 +137,33 @@ For each markdown file in the target folder:
 
 ### Basic Usage
 ```bash
-python youtube_channel_updater.py
+python youtube_summary_patcher.py
 ```
 This processes all `.md` files in `output/yt_generated/` folder (default)
-Updates both channel info and video descriptions
+Patches files with channel info, TOC, and video descriptions
 
 ### With Custom Folder
 ```bash
-python youtube_channel_updater.py --folder /path/to/folder
+python youtube_summary_patcher.py --folder /path/to/folder
 ```
 
 ### Dry Run Mode (Preview Only)
 ```bash
-python youtube_channel_updater.py --dry-run
+python youtube_summary_patcher.py --dry-run
 ```
-Shows what would be updated without making changes
+Shows what would be patched without making changes
 
 ### Verbose Mode
 ```bash
-python youtube_channel_updater.py --verbose
+python youtube_summary_patcher.py --verbose
 ```
 Shows detailed processing information for each file
 
 ### Skip Description Mode
 ```bash
-python youtube_channel_updater.py --skip-description
+python youtube_summary_patcher.py --skip-description
 ```
-Only updates channel information, skips video description extraction
+Only patches channel information, skips video description extraction
 Useful when you only want to add author/channel lines
 
 ## Output Report
@@ -170,7 +172,7 @@ After processing completes, display a summary:
 
 ```
 ==================================================
-YouTube Channel Updater Summary
+YouTube Summary Patcher Summary
 ==================================================
 Total files found:      25
 Successfully updated:   20
@@ -279,12 +281,13 @@ This video teaches RAG from scratch...
 
 ## HowTo Generate
 
-Generate Python code based on all the above instructions. The file should be named `youtube_channel_updater.py`.
+Generate Python code based on all the above instructions. The file should be named `youtube_summary_patcher.py`.
 
 The script should:
 1. Use argparse for CLI argument parsing
 2. Include detailed docstrings for all functions
 3. Follow the same code style as `youtube_summary_generator.py`
-4. Reuse the `_get_youtube_channel_info()` function pattern from `youtube_summary_generator.py`
+4. Reuse the `_get_youtube_channel_info()` and `_get_youtube_description()` function patterns from `youtube_summary_generator.py`
 5. Include comprehensive error handling
 6. Provide clear progress feedback to the user
+7. Support TOC generation from existing headers

@@ -1,41 +1,42 @@
 """
-YouTube Channel Updater
+YouTube Summary Patcher
 
-This module updates existing YouTube summary markdown files by adding missing channel
-author information and video descriptions.
+This module patches existing YouTube summary markdown files to the current format
+by adding missing metadata and structure.
 
 Purpose:
-    Updates files generated before the channel information and video description
-    features were implemented. Scans existing YouTube summary files and inserts:
-    - Author/channel line above the video link
-    - Video description after TOC section
+    Patches legacy files generated before the channel information, TOC, and video
+    description features were implemented. Brings old files up to current standard by:
+    - Adding author/channel line above the video link
+    - Generating TOC from existing headers (if missing)
+    - Adding video description after TOC section
 
 Usage:
-    # Process default folder (output/yt_generated/)
-    python youtube_channel_updater.py
+    # Patch default folder (output/yt_generated/)
+    python youtube_summary_patcher.py
 
-    # Process custom folder
-    python youtube_channel_updater.py --folder /path/to/folder
+    # Patch custom folder
+    python youtube_summary_patcher.py --folder /path/to/folder
 
     # Preview changes without modifying files
-    python youtube_channel_updater.py --dry-run
+    python youtube_summary_patcher.py --dry-run
 
     # Verbose output
-    python youtube_channel_updater.py --verbose
+    python youtube_summary_patcher.py --verbose
 
     # Skip video description extraction (channel info only)
-    python youtube_channel_updater.py --skip-description
+    python youtube_summary_patcher.py --skip-description
 
 External Dependencies:
     - yt-dlp: YouTube metadata and description extraction tool
 
 Example Output:
     ==================================================
-    YouTube Channel Updater Summary
+    YouTube Summary Patcher Summary
     ==================================================
     Total files found:      25
-    Successfully updated:   20
-    Already updated:        3
+    Successfully patched:   20
+    Already current:        3
     No link found:          1
     Extraction failed:      1
 
@@ -813,11 +814,11 @@ def print_summary(stats, dry_run=False, skip_description=False):
 
     Example:
         ==================================================
-        YouTube Channel Updater Summary
+        YouTube Summary Patcher Summary
         ==================================================
         Total files found:      25
-        Successfully updated:   20
-        Already updated:        3
+        Successfully patched:   20
+        Already current:        3
         No link found:          1
         Extraction failed:      1
 
@@ -830,7 +831,7 @@ def print_summary(stats, dry_run=False, skip_description=False):
         ==================================================
     """
     print("\n" + "=" * 50)
-    print("YouTube Channel Updater Summary")
+    print("YouTube Summary Patcher Summary")
     if dry_run:
         print("(DRY-RUN MODE - No files were modified)")
     print("=" * 50)
@@ -856,9 +857,9 @@ def print_summary(stats, dry_run=False, skip_description=False):
 
 def main():
     """
-    Main entry point for the YouTube Channel Updater CLI application.
+    Main entry point for the YouTube Summary Patcher CLI application.
 
-    Parses command-line arguments and orchestrates the update process.
+    Parses command-line arguments and orchestrates the patching process.
 
     Command-line Arguments:
         --folder: Path to folder containing markdown files (default: output/yt_generated/)
@@ -867,13 +868,13 @@ def main():
         --skip-description: Skip video description extraction
 
     Usage:
-        python youtube_channel_updater.py
-        python youtube_channel_updater.py --folder /path/to/folder
-        python youtube_channel_updater.py --dry-run --verbose
-        python youtube_channel_updater.py --skip-description
+        python youtube_summary_patcher.py
+        python youtube_summary_patcher.py --folder /path/to/folder
+        python youtube_summary_patcher.py --dry-run --verbose
+        python youtube_summary_patcher.py --skip-description
     """
     parser = argparse.ArgumentParser(
-        description='Update existing YouTube summary files with channel information and video descriptions',
+        description='Patch existing YouTube summary files with missing metadata and structure',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
