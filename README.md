@@ -1,26 +1,29 @@
 # Content Summary Toolkit
 
-A batch content summarizer that processes YouTube videos and blog articles using AI-powered summarization through the [fabric](https://github.com/danielmiessler/fabric) tool.
+A batch content summarizer that processes YouTube videos, blog articles, and local subtitle files (SRT/VTT/etc.) using AI-powered summarization through the [fabric](https://github.com/danielmiessler/fabric) tool.
 
 ## Overview
 
-This tool helps you process a backlog of content (YouTube videos and blog articles) by automatically generating structured markdown summaries. It extracts transcripts from YouTube videos, fetches blog content, and creates comprehensive summaries using multiple AI patterns.
+This tool helps you process a backlog of content by automatically generating structured markdown summaries. It extracts transcripts from YouTube videos, fetches blog content, processes local subtitle files, and creates comprehensive summaries using multiple AI patterns.
 
 ## Features
 
 - **Batch Processing**: Process multiple entries from a single batch file
-- **Multi-Format Support**: Handles both YouTube videos and blog articles
+- **Multi-Format Support**: Handles YouTube videos, blog articles, and local subtitle files
 - **AI-Powered Summaries**: Uses fabric's AI patterns for intelligent summarization
 - **Multiple Summary Types**: Generates different perspectives on content:
   - General summary
-  - YouTube-specific summary (for videos)
+  - YouTube-specific summary (for videos and subtitles)
   - Extracted wisdom and insights
-- **Rich Metadata Extraction**:
+- **Rich Metadata Extraction** (YouTube only):
   - Channel information with modern handle format (`@username`)
   - Video descriptions from creators
   - Auto-generated Table of Contents (TOC)
+- **Local Subtitle Flow**: Recursively process folders of `.srt` / `.vtt` / `.sub` / `.sbv` / `.txt` files without YouTube lookups
+- **Resilient to Fabric Output Drift**: Shared retry + pseudo-header promotion so dropped `# ` prefixes never break TOC anchors
 - **Organized Output**: Structured folder hierarchy for easy navigation
-- **Legacy Patcher**: Patch existing files with missing channel info and descriptions
+- **Legacy Patcher**: Patch existing files with missing channel info, descriptions, and pseudo-header self-heal
+- **Content Upgrader**: Upgrade older note formats to current template with validation + retry
 - **Comprehensive Reporting**: Detailed statistics and success metrics
 - **Error Resilient**: Continues processing even if individual entries fail
 
@@ -66,6 +69,47 @@ python youtube_summary_generator.py '[Learn RAG From Scratch](https://www.youtub
 Process a single blog article:
 ```bash
 python blog_summary_generator.py '[Article Title](https://example.com/article)'
+```
+
+### Local Subtitle Folder
+
+Recursively summarize every subtitle file under a directory — no YouTube
+fetching, no channel lookup, no description. Outputs `{name}.summary.md`
+alongside each source file:
+
+```bash
+# Process a whole course folder (all .srt/.vtt/.sub/.sbv/.txt)
+python subtitle_summary_generator.py /path/to/subtitles
+
+# Dry-run — list what would be processed
+python subtitle_summary_generator.py /path/to/subtitles --dry-run
+
+# Overwrite existing .summary.md outputs
+python subtitle_summary_generator.py /path/to/subtitles --overwrite --verbose
+
+# Limit to specific extensions
+python subtitle_summary_generator.py /path/to/subtitles --extensions .srt .vtt
+```
+
+Each `.summary.md` contains the standard TOC + 3 fabric sections
+(`summarize` / `youtube_summary` / `extract_wisdom`). Previously-produced
+`.summary.txt` files from older versions are also skipped on re-scan.
+
+### Upgrading Legacy Notes
+
+Upgrade existing YouTube notes in an Obsidian vault to the current
+template — detects partial/legacy shapes and runs only the missing fabric
+patterns:
+
+```bash
+# Dry-run classification
+python youtube_content_upgrader.py --folder /path/to/Youtube --dry-run
+
+# Process one category, limited to N files for testing
+python youtube_content_upgrader.py --folder /path/to/Youtube --category 2 --limit 5
+
+# Process every upgradable file
+python youtube_content_upgrader.py --folder /path/to/Youtube --category all --verbose
 ```
 
 ### Patching Legacy Files
@@ -116,7 +160,8 @@ Create a text file with entries in markdown link format. The processor supports:
 
 ## Output Structure
 
-The processor creates an organized folder structure:
+The URL-driven flows (YouTube + blog) create an organized folder structure
+under the current directory:
 
 ```
 output/
@@ -128,6 +173,20 @@ output/
 │   └── {article-title}.md
 └── blog_generated/        # Blog summaries
     └── {article-title}.md
+```
+
+The local subtitle flow (`subtitle_summary_generator.py`) writes its
+output **in-place** next to each source file — no central folder:
+
+```
+/path/to/subtitles/
+├── 01 - Intro.srt
+├── 01 - Intro.srt.summary.md     ← generated
+├── 02 - Setup.srt
+├── 02 - Setup.srt.summary.md     ← generated
+└── subfolder/
+    ├── 03 - Next.vtt
+    └── 03 - Next.vtt.summary.md  ← generated
 ```
 
 ## Summary Output Format
@@ -208,33 +267,71 @@ Total time:           5 min 23.45 sec
 
 ## Architecture
 
-The project consists of four main components:
+The project is one shared helper module plus six entry-point scripts:
 
-1. **content_summary_toolkit.py**: Main orchestrator
+1. **fabric_utils.py**: Shared helper module (internal)
+   - `filter_think_sections` — strip `<think>...</think>` blocks
+   - `extract_first_level1_header` — read first `# ` header from markdown
+   - `generate_toc` — build `### TOC` with `[[#header]]` wikilinks
+   - `promote_pseudo_header` — recover when fabric drops the leading `# ` on a heading
+   - `run_command` — shell runner returning `(success, output)` with optional timeout
+   - `run_fabric_with_retry` — runs a fabric pattern, retries up to `MAX_FABRIC_ATTEMPTS=3` when validation fails, falls back to `promote_pseudo_header` to recover deterministic dropouts. Accepts a pluggable validator so each tool can enforce its own quality bar.
+
+2. **content_summary_toolkit.py**: Main orchestrator
    - Parses batch files
-   - Routes entries to appropriate generators
+   - Routes entries to appropriate generators (YouTube vs blog)
    - Tracks statistics and generates reports
 
-2. **youtube_summary_generator.py**: YouTube processor
+3. **youtube_summary_generator.py**: YouTube processor
    - Extracts channel information using `yt-dlp`
    - Extracts video descriptions using `yt-dlp --get-description`
    - Downloads transcripts using `fabric -y`
-   - Generates Table of Contents from section headers
-   - Generates 3 types of summaries
+   - Runs 3 fabric patterns with retry + pseudo-header fallback
+   - Generates TOC from section headers
    - Creates structured markdown output with full metadata
 
-3. **blog_summary_generator.py**: Blog processor
+4. **blog_summary_generator.py**: Blog processor
    - Fetches blog content using `fabric -u`
-   - Generates 2 types of summaries
+   - Runs 2 fabric patterns with retry + pseudo-header fallback
    - Creates structured markdown output
 
-4. **youtube_summary_patcher.py**: Legacy file patcher
+5. **subtitle_summary_generator.py**: Local subtitle processor
+   - Recursively scans a folder for `.srt` / `.sub` / `.vtt` / `.sbv` / `.txt`
+   - Skips files that already have `.summary.md` (or legacy `.summary.txt`) alongside them
+   - Runs 3 fabric patterns with retry + pseudo-header fallback
+   - Writes `{source}.summary.md` in place
+   - Flags: `--overwrite`, `--dry-run`, `--verbose`, `--extensions`
+
+6. **youtube_content_upgrader.py**: Content upgrader
+   - Classifies existing notes into categories (old-fabric, bare-content, near-compliant)
+   - Runs only the missing fabric patterns per category
+   - Enforces strict per-pattern validation (minimum line counts, required sub-headers)
+   - Falls back to pseudo-header promotion after retries exhaust
+
+7. **youtube_summary_patcher.py**: Legacy file patcher
    - Patches existing YouTube summary files to current format
-   - Adds missing channel information
-   - Generates TOC from existing headers
+   - Adds missing channel information (yt-dlp)
+   - Generates TOC from existing headers (shared `generate_toc`)
    - Adds missing video descriptions after TOC
+   - **Self-heals pseudo-headers on read**: if a section body has `ONE SENTENCE SUMMARY:` as plain text, promotes it to `# ONE SENTENCE SUMMARY:` so Obsidian TOC anchors resolve
    - Supports dry-run mode for preview
-   - Provides detailed patch statistics
+
+## Resilience to Fabric Output Drift
+
+Fabric's LLM output is non-deterministic and occasionally drops the leading
+`# ` from the top heading of a section — which used to silently produce
+truncated TOCs with broken anchors. The toolkit now defends in depth:
+
+1. **Retry** — each fabric call is run up to `MAX_FABRIC_ATTEMPTS=3` times
+   (configurable) until the output passes validation (default: contains a
+   level-1 header; per-tool validators may add stricter checks such as
+   minimum line counts).
+2. **Pseudo-header promotion** — if retries exhaust, the first
+   heading-shaped uppercase line (`ONE SENTENCE SUMMARY:`, `SUMMARY`, etc.)
+   is promoted to `# ...` so TOC generation succeeds.
+3. **Self-heal on patch** — `youtube_summary_patcher.py` runs the same
+   promotion pass over existing files on disk, so legacy notes with dropped
+   `# ` prefixes get fixed the next time the patcher visits them.
 
 ## Error Handling
 
@@ -243,6 +340,7 @@ The processor is designed to be resilient:
 - All errors are collected and reported at the end
 - Invalid format lines are logged and skipped
 - Network issues are caught and reported
+- Fabric output defects are retried and auto-repaired where possible
 
 ## Use Cases
 
@@ -259,6 +357,10 @@ This project uses detailed specifications in the `specs/` folder:
 - `specs/youtube_summary_generator.md` - YouTube processing specification
 - `specs/blog_summary_generator.md` - Blog processing specification
 - `specs/youtube_summary_patcher.md` - YouTube patcher specification
+
+When adding a new fabric-based generator, import from `fabric_utils.py`
+rather than re-implementing the helpers — that keeps retry behavior,
+TOC formatting, and pseudo-header recovery consistent across the toolkit.
 
 ## License
 

@@ -39,118 +39,11 @@ import sys
 import os
 import yt_dlp
 
-
-def _filter_think_sections(text):
-    """
-    Remove <think></think> sections from text.
-
-    LLM outputs from fabric may contain <think></think> tags that need to be filtered out
-    before including the content in the final summary.
-
-    Args:
-        text (str): Text potentially containing <think></think> sections
-
-    Returns:
-        str: Text with all <think></think> sections removed and stripped
-    """
-    return re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
-
-
-def _extract_first_level1_header(text):
-    """
-    Extract the first level 1 header text from content.
-
-    Searches for the first line starting with '# ' (single hash followed by space)
-    and returns the header text with trailing colons removed.
-
-    Args:
-        text (str): Text content to search for headers
-
-    Returns:
-        str: Header text with trailing colons removed, or None if no header found
-
-    Examples:
-        >>> _extract_first_level1_header("# ONE SENTENCE SUMMARY:\\nContent here")
-        'ONE SENTENCE SUMMARY'
-
-        >>> _extract_first_level1_header("# Summary of Video\\nContent")
-        'Summary of Video'
-    """
-    for line in text.split('\n'):
-        # Match lines starting with exactly one # followed by space
-        match = re.match(r'^#\s+(.+)$', line.strip())
-        if match:
-            header_text = match.group(1)
-            # Remove trailing colons and trim whitespace
-            header_text = re.sub(r':+\s*$', '', header_text).strip()
-            return header_text
-
-    # No level 1 header found
-    return None
-
-
-def _generate_toc(headers):
-    """
-    Generate Table of Contents from header texts.
-
-    Args:
-        headers (list): List of header texts extracted from sections
-
-    Returns:
-        str: Formatted TOC markdown or empty string if no headers
-
-    Example:
-        >>> headers = ['ONE SENTENCE SUMMARY', 'Summary of Video', 'SUMMARY']
-        >>> print(_generate_toc(headers))
-        ### TOC
-        - [[#ONE SENTENCE SUMMARY]]
-        - [[#Summary of Video]]
-        - [[#SUMMARY]]
-    """
-    # Filter out None values (sections with no headers)
-    valid_headers = [h for h in headers if h is not None]
-
-    if not valid_headers:
-        return ""  # No headers found, return empty string
-
-    # Build TOC
-    toc_lines = ["### TOC"]
-    for header in valid_headers:
-        toc_lines.append(f"- [[#{header}]]")
-
-    return "\n".join(toc_lines)
-
-
-def _run_command(command):
-    """
-    Run a bash command and return the output.
-
-    Executes shell commands for retrieving YouTube transcripts and processing them
-    through fabric patterns.
-
-    Args:
-        command (str): The bash command to execute
-
-    Returns:
-        str: Command stdout if successful, empty string on error
-
-    Example Commands:
-        - "fabric -y '<youtube_url>' --transcript-with-timestamps > 'subtitle/{title}.txt'"
-        - "cat 'subtitle/{title}.txt' | fabric -p summarize"
-        - "cat 'subtitle/{title}.txt' | fabric -p youtube_summary"
-        - "cat 'subtitle/{title}.txt' | fabric -p extract_wisdom"
-    """
-    try:
-        result = subprocess.run(command, shell=True, capture_output=True, text=True)
-        if result.returncode == 0:
-            return result.stdout.strip()
-        else:
-            print(f"Error running command: {command}")
-            print(f"Error output: {result.stderr}")
-            return ""
-    except Exception as e:
-        print(f"Exception running command: {e}")
-        return ""
+from fabric_utils import (
+    generate_toc,
+    run_command,
+    run_fabric_with_retry,
+)
 
 
 def _get_youtube_channel_info(video_url):
@@ -351,42 +244,42 @@ def process_youtube_entry(entry):
     # Get transcript using fabric
     subtitle_file = f"output/subtitle/{title}.txt"
     reference_cmd = f"""fabric -y "{reference}" --transcript-with-timestamps > "{subtitle_file}" """
-    source_information = _run_command(reference_cmd)
+    run_command(reference_cmd)
     print(f"""... generated "{subtitle_file}" subtitle file \n""")
 
-    # Get summary using fabric's summarize pattern
-    # Command: fabric -p summarize source_information
+    # Get summary using fabric's summarize pattern (retry + pseudo-header fallback)
     print("Getting summary ...")
     summary_cmd = f"""cat "{subtitle_file}" | fabric -p summarize"""
-    summary = _run_command(summary_cmd)
-    filtered_summary = _filter_think_sections(summary)
+    success, filtered_summary, header_summarize = run_fabric_with_retry(
+        summary_cmd, "summarize")
+    if not success:
+        print("Error: fabric summarize failed; aborting")
+        return
     print(f"""... generated summary section \n""")
 
     # Get YouTube summary using fabric's youtube_summary pattern
-    # Command: fabric -p youtube_summary
     print("Getting YouTube summary...")
     yt_summary_cmd = f"""cat "{subtitle_file}" | fabric -p youtube_summary"""
-    youtube_summary = _run_command(yt_summary_cmd)
-    filtered_youtube_summary = _filter_think_sections(youtube_summary)
+    success, filtered_youtube_summary, header_youtube = run_fabric_with_retry(
+        yt_summary_cmd, "youtube_summary")
+    if not success:
+        print("Error: fabric youtube_summary failed; aborting")
+        return
     print(f"""... generated youtube summary section""")
 
-    
     # Extract wisdom using fabric's extract_wisdom pattern
-    # Command: fabric -p extract_wisdom
     print("Extracting YouTube Wisdom ...")
-    yt_summary_cmd = f"""cat "{subtitle_file}" | fabric -p extract_wisdom"""
-    extract_wisdom = _run_command(yt_summary_cmd)
-    filtered_extract_wisdom = _filter_think_sections(extract_wisdom)
-    print(f"""... generated youtube summary section""")
+    wisdom_cmd = f"""cat "{subtitle_file}" | fabric -p extract_wisdom"""
+    success, filtered_extract_wisdom, header_wisdom = run_fabric_with_retry(
+        wisdom_cmd, "extract_wisdom")
+    if not success:
+        print("Error: fabric extract_wisdom failed; aborting")
+        return
+    print(f"""... generated extract_wisdom section""")
 
-    # Extract first level 1 header from each section for TOC
+    # Generate TOC from headers returned by retry helper
     print("Generating table of contents...")
-    header_summarize = _extract_first_level1_header(filtered_summary)
-    header_youtube = _extract_first_level1_header(filtered_youtube_summary)
-    header_wisdom = _extract_first_level1_header(filtered_extract_wisdom)
-
-    # Generate TOC
-    toc_content = _generate_toc([header_summarize, header_youtube, header_wisdom])
+    toc_content = generate_toc([header_summarize, header_youtube, header_wisdom])
 
     # Create filename from title
     # Filename format: generated/{title}.md

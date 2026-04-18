@@ -29,121 +29,15 @@ Example:
     python blog_summary_generator.py '[Article - More of Silicon Valley is building on free Chinese AI](https://www.nbcnews.com/tech/innovation/silicon-valley-building-free-chinese-ai-rcna242430)'
 """
 
-import subprocess
 import re
 import sys
 import os
 
-
-def _filter_think_sections(text):
-    """
-    Remove <think></think> sections from text.
-
-    LLM outputs from fabric may contain <think></think> tags that need to be filtered out
-    before including the content in the final summary.
-
-    Args:
-        text (str): Text potentially containing <think></think> sections
-
-    Returns:
-        str: Text with all <think></think> sections removed and stripped
-    """
-    return re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
-
-
-def _extract_first_level1_header(text):
-    """
-    Extract the first level 1 header text from content.
-
-    Searches for the first line starting with '# ' (single hash followed by space)
-    and returns the header text with trailing colons removed.
-
-    Args:
-        text (str): Text content to search for headers
-
-    Returns:
-        str: Header text with trailing colons removed, or None if no header found
-
-    Examples:
-        >>> _extract_first_level1_header("# ONE SENTENCE SUMMARY:\\nContent here")
-        'ONE SENTENCE SUMMARY'
-
-        >>> _extract_first_level1_header("# Summary of Article\\nContent")
-        'Summary of Article'
-    """
-    for line in text.split('\n'):
-        # Match lines starting with exactly one # followed by space
-        match = re.match(r'^#\s+(.+)$', line.strip())
-        if match:
-            header_text = match.group(1)
-            # Remove trailing colons and trim whitespace
-            header_text = re.sub(r':+\s*$', '', header_text).strip()
-            return header_text
-
-    # No level 1 header found
-    return None
-
-
-def _generate_toc(headers):
-    """
-    Generate Table of Contents from header texts.
-
-    Args:
-        headers (list): List of header texts extracted from sections
-
-    Returns:
-        str: Formatted TOC markdown or empty string if no headers
-
-    Example:
-        >>> headers = ['ONE SENTENCE SUMMARY', 'SUMMARY']
-        >>> print(_generate_toc(headers))
-        ### TOC
-        - [[#ONE SENTENCE SUMMARY]]
-        - [[#SUMMARY]]
-    """
-    # Filter out None values (sections with no headers)
-    valid_headers = [h for h in headers if h is not None]
-
-    if not valid_headers:
-        return ""  # No headers found, return empty string
-
-    # Build TOC
-    toc_lines = ["### TOC"]
-    for header in valid_headers:
-        toc_lines.append(f"- [[#{header}]]")
-
-    return "\n".join(toc_lines)
-
-
-def _run_command(command):
-    """
-    Run a bash command and return the output.
-
-    Executes shell commands for fetching blog content and processing it
-    through fabric patterns.
-
-    Args:
-        command (str): The bash command to execute
-
-    Returns:
-        str: Command stdout if successful, empty string on error
-
-    Example Commands:
-        - "fabric -u '<blog_url>' > 'output/blog/{title}.md'"
-        - "cat 'output/blog/{title}.md' | fabric -p summarize"
-        - "cat 'output/blog/{title}.md' | fabric -p extract_wisdom"
-    """
-    try:
-        result = subprocess.run(command, shell=True, capture_output=True, text=True)
-        if result.returncode == 0:
-            return result.stdout.strip()
-        else:
-            print(f"Error running command: {command}")
-            print(f"Error output: {result.stderr}")
-            return ""
-    except Exception as e:
-        print(f"Exception running command: {e}")
-        return ""
+from fabric_utils import (
+    generate_toc,
+    run_command,
+    run_fabric_with_retry,
+)
 
 
 def process_blog_entry(entry):
@@ -214,33 +108,32 @@ def process_blog_entry(entry):
     # Get blog_file using fabric
     blog_file = f"output/blog/{title}.md"
     reference_cmd = f"""fabric -u "{reference}"  > "{blog_file}" """
-    source_information = _run_command(reference_cmd)
+    run_command(reference_cmd)
     print(f"... generated '{blog_file}' blog file \n")
 
-    # Get summary using fabric's summarize pattern
-    # Command: fabric -p summarize source_information
+    # Get summary using fabric's summarize pattern (retry + pseudo-header fallback)
     print("Getting Blog summary ...")
     summary_cmd = f"""cat "{blog_file}" | fabric -p summarize"""
-    summary = _run_command(summary_cmd)
-    filtered_summary = _filter_think_sections(summary)
+    success, filtered_summary, header_summarize = run_fabric_with_retry(
+        summary_cmd, "summarize")
+    if not success:
+        print("Error: fabric summarize failed; aborting")
+        return
     print(f"... generated blog summary section \n")
 
-    
     # Extract wisdom using fabric's extract_wisdom pattern
-    # Command: fabric -p extract_wisdom
     print("Extracting Blog Wisdom ...")
     wisdom_cmd = f"""cat "{blog_file}" | fabric -p extract_wisdom"""
-    extract_wisdom = _run_command(wisdom_cmd)
-    filtered_extract_wisdom = _filter_think_sections(extract_wisdom)
+    success, filtered_extract_wisdom, header_wisdom = run_fabric_with_retry(
+        wisdom_cmd, "extract_wisdom")
+    if not success:
+        print("Error: fabric extract_wisdom failed; aborting")
+        return
     print(f"... generated blog extract wisdom section\n")
 
-    # Extract first level 1 header from each section for TOC
+    # Generate TOC (only 2 sections for blog) from headers returned by retry helper
     print("Generating table of contents...")
-    header_summarize = _extract_first_level1_header(filtered_summary)
-    header_wisdom = _extract_first_level1_header(filtered_extract_wisdom)
-
-    # Generate TOC (only 2 sections for blog)
-    toc_content = _generate_toc([header_summarize, header_wisdom])
+    toc_content = generate_toc([header_summarize, header_wisdom])
 
     # Create filename from title
     # Filename format: output/blog_generated/{title}.md

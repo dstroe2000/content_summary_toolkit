@@ -57,6 +57,12 @@ import subprocess
 import yt_dlp
 from pathlib import Path
 
+from fabric_utils import (
+    extract_first_level1_header,
+    generate_toc,
+    promote_pseudo_header,
+)
+
 
 def _get_youtube_channel_info(video_url):
     """
@@ -195,6 +201,36 @@ def _is_already_updated(content):
     return False
 
 
+def _heal_pseudo_headers(content):
+    """
+    Promote any plain heading-like lines at the top of each main section
+    to level-1 markdown headers so that TOC anchors resolve in Obsidian.
+
+    Splits ``content`` by the triple-separator pattern (``---\n---\n---``)
+    and applies ``promote_pseudo_header`` to each section independently.
+    Leaves content unchanged if no promotion opportunities are found.
+
+    Args:
+        content (str): Full markdown file content.
+
+    Returns:
+        tuple: (patched_content: str, promotions: int) where ``promotions``
+        is the number of sections whose top line was promoted to ``# ``.
+    """
+    # Preserve original separator tokens between sections so the file
+    # round-trips cleanly after rejoining.
+    parts = re.split(r'(---\s*\n---\s*\n---)', content)
+    # parts = [section0, sep, section1, sep, section2, ...]
+    promotions = 0
+    for i in range(0, len(parts), 2):
+        if extract_first_level1_header(parts[i]) is None:
+            patched, promoted = promote_pseudo_header(parts[i])
+            if promoted is not None:
+                parts[i] = patched
+                promotions += 1
+    return ''.join(parts), promotions
+
+
 def _extract_headers(content):
     """
     Extract the 3 main section headers from AI-generated content.
@@ -204,55 +240,50 @@ def _extract_headers(content):
     2. Summary: {title} (from fabric -p youtube_summary)
     3. SUMMARY (from fabric -p extract_wisdom)
 
-    These sections are separated by triple separators (---\n---\n---).
+    These sections are separated by triple separators (---\n---\n---). Each
+    section is scanned for a level-1 header via
+    ``fabric_utils.extract_first_level1_header``. If none is found, the
+    ``promote_pseudo_header`` fallback is applied to recover from legacy
+    notes where fabric dropped the leading ``# `` (producing a plain
+    ``ONE SENTENCE SUMMARY:`` line instead of a markdown header).
 
     Args:
         content (str): Markdown file content
 
     Returns:
-        list: List of 3 main header texts (without # and trailing colons)
+        list: Up to 3 main header texts (without # and trailing colons)
 
     Example:
         headers = _extract_headers(content)
         # Returns: ['ONE SENTENCE SUMMARY', 'Summary: Title', 'SUMMARY']
     """
-    headers = []
-
     # Split content by triple separator to get the 3 main sections
-    # Pattern: ---\n---\n--- (with possible whitespace)
     triple_sep_pattern = r'---\s*\n---\s*\n---'
     sections = re.split(triple_sep_pattern, content)
 
-    # Structure:
-    # sections[0] = channel + link + description + ONE SENTENCE SUMMARY section
-    # sections[1] = Summary: Title section (from youtube_summary)
-    # sections[2] = SUMMARY section (from extract_wisdom)
-
     if len(sections) < 3:
-        # Old format or different structure, fallback to extracting first 3 headers
-        for line in content.split('\n'):
-            match = re.match(r'^#\s+(.+)$', line.strip())
-            if match:
-                header_text = match.group(1)
-                header_text = re.sub(r':+\s*$', '', header_text).strip()
-                headers.append(header_text)
-                if len(headers) >= 3:
-                    break
+        # Legacy format: scan whole document for first 3 H1s.
+        headers = []
+        remaining = content
+        for _ in range(3):
+            h = extract_first_level1_header(remaining)
+            if h is None:
+                break
+            headers.append(h)
+            idx = remaining.find(h)
+            if idx < 0:
+                break
+            remaining = remaining[idx + len(h):]
         return headers[:3]
 
-    # Extract first level 1 header from each of the 3 sections
-    # Start from sections[0] to get the first header (ONE SENTENCE SUMMARY)
-    for i in range(0, min(3, len(sections))):
-        section = sections[i]
-        for line in section.split('\n'):
-            match = re.match(r'^#\s+(.+)$', line.strip())
-            if match:
-                header_text = match.group(1)
-                header_text = re.sub(r':+\s*$', '', header_text).strip()
-                headers.append(header_text)
-                break  # Only get first header from each section
-
-    return headers[:3]  # Ensure we only return 3 headers
+    # Section-aligned extraction. ``_heal_pseudo_headers`` must be called
+    # on ``content`` before this function to recover missing ``# `` prefixes.
+    headers = []
+    for section in sections[:3]:
+        h = extract_first_level1_header(section)
+        if h is not None:
+            headers.append(h)
+    return headers[:3]
 
 
 def _has_toc(content):
@@ -358,11 +389,10 @@ def _insert_toc(content, headers):
         # No headers found, return original content
         return content
 
-    # Build TOC content
-    toc_lines = ["### TOC"]
-    for header in headers:
-        toc_lines.append(f"- [[#{header}]]")
-    toc_content = "\n".join(toc_lines)
+    # Build TOC via shared helper (matches generator/upgrader output exactly)
+    toc_content = generate_toc(headers)
+    if not toc_content:
+        return content
 
     # Pattern to find the first --- separator
     # We want to insert after it
@@ -535,13 +565,21 @@ def process_file(file_path, dry_run=False, verbose=False, skip_description=False
         if verbose:
             print(f"  Found video: {youtube_url}")
 
-        # Start with original content
+        # Heal pseudo-headers first: if a previous fabric run dropped the
+        # leading ``# `` on a section heading, promote it now so TOC anchors
+        # resolve in Obsidian.
+        content, pseudo_header_promotions = _heal_pseudo_headers(content)
+        if verbose and pseudo_header_promotions:
+            print(f"  ✓ Promoted {pseudo_header_promotions} pseudo-header(s) to H1")
+
+        # Start with (possibly healed) content
         updated_content = content
 
         # Track what was updated
         channel_added = False
         description_added = False
         description_exists = False
+        pseudo_headers_added = pseudo_header_promotions > 0
         description_failed = False
         author_name = None
         channel_url = None
@@ -636,7 +674,7 @@ def process_file(file_path, dry_run=False, verbose=False, skip_description=False
                         print("  ⚠ Failed to fetch description")
 
         # Determine if anything was updated
-        something_updated = channel_added or toc_added or description_added
+        something_updated = channel_added or toc_added or description_added or pseudo_headers_added
 
         if not something_updated:
             # Nothing was updated
@@ -719,8 +757,8 @@ def process_folder(folder_path, dry_run=False, verbose=False, skip_description=F
         print(f"Error: Folder not found: {folder_path}")
         sys.exit(1)
 
-    # Find all .md files
-    md_files = list(folder_path.glob("*.md"))
+    # Find all .md files (recursive to support nested vault structures)
+    md_files = list(folder_path.rglob("*.md"))
 
     if not md_files:
         print(f"No markdown files found in: {folder_path}")
