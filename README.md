@@ -35,6 +35,41 @@ This tool helps you process a backlog of content by automatically generating str
   - Requires patterns: `summarize`, `youtube_summary`, `extract_wisdom`
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp) - YouTube metadata extraction
   - Used to extract channel information from YouTube videos
+  - Authenticates via `--cookies-from-browser` to handle age-gated, members-only,
+    or rate-limited videos. Default browser is `chrome`; override with env var
+    `YTDLP_COOKIES_BROWSER` (e.g. `firefox`, `brave`, `edge`, `safari`) or set
+    it to empty string to disable cookie pulling.
+
+### Browser cookie pre-conditions
+
+The toolkit pulls YouTube auth cookies from a real browser profile via
+`yt-dlp --cookies-from-browser`. Set this up once before running:
+
+1. **Install the browser** matching `YTDLP_COOKIES_BROWSER` (default `chrome`).
+   On macOS: `brew install --cask google-chrome` (or `firefox`, `brave-browser`,
+   `microsoft-edge`). Safari is built-in.
+2. **Sign into YouTube** (i.e. into your Google account) in that browser at
+   <https://youtube.com>. The cookie jar must contain a live YouTube session
+   — fresh installs with no login produce empty cookies and yt-dlp will
+   silently fall back to anonymous requests, defeating the point.
+3. **Use the default profile** unless you override it. yt-dlp reads the
+   browser's default profile by default; if you keep YouTube login in a
+   non-default Chrome profile, set
+   `YTDLP_COOKIES_BROWSER="chrome:Profile 1"` (yt-dlp accepts a
+   `BROWSER[:PROFILE]` form).
+4. **macOS Keychain prompt** (Chrome / Edge / Brave only): the first time
+   yt-dlp reads cookies, macOS pops a Keychain prompt asking to release the
+   "Chrome Safe Storage" password. Click *Always Allow* so subsequent runs
+   are non-interactive. Firefox and Safari do not require this.
+5. **Linux Chrome / Brave**: Chromium-family browsers may need to be
+   **closed** for yt-dlp to read the cookie SQLite DB on Linux (file lock).
+   Firefox can be read while open. macOS Chrome can be read while open on
+   recent yt-dlp.
+6. **Stay logged in**: if Google logs you out (password change, 2FA reset,
+   browser cookie clear), re-login in the browser before next run.
+
+To disable cookie pulling entirely (e.g. CI without a browser), export
+`YTDLP_COOKIES_BROWSER=""`. Public videos still work without cookies.
 
 ## Installation
 

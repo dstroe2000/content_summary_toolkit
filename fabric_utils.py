@@ -16,8 +16,53 @@ so individual tools can layer their own quality checks on top of the
 default "must contain a level-1 header" rule.
 """
 
+import os
 import re
 import subprocess
+import shlex
+
+
+# Browser to pull YouTube auth cookies from. Many videos (age-gated, members-only,
+# rate-limited, or region-restricted) now require authenticated cookies; pulling
+# them straight from a logged-in browser profile avoids manual cookie exports.
+# Override with env var YTDLP_COOKIES_BROWSER (e.g. firefox, brave, edge, safari)
+# or set it to an empty string to disable.
+YTDLP_COOKIES_BROWSER = os.environ.get("YTDLP_COOKIES_BROWSER", "chrome")
+
+
+def ytdlp_cookie_opts():
+    """Return yt_dlp Python-API opts dict snippet for cookies-from-browser.
+
+    Empty dict if YTDLP_COOKIES_BROWSER is unset/empty so callers can
+    unconditionally `**`-merge.
+    """
+    if not YTDLP_COOKIES_BROWSER:
+        return {}
+    return {"cookiesfrombrowser": (YTDLP_COOKIES_BROWSER,)}
+
+
+def ytdlp_cookie_cli():
+    """Return CLI fragment `--cookies-from-browser <browser>` (shell-quoted), or ''."""
+    if not YTDLP_COOKIES_BROWSER:
+        return ""
+    return f"--cookies-from-browser {shlex.quote(YTDLP_COOKIES_BROWSER)}"
+
+
+def ytdlp_meta_opts():
+    """Return yt_dlp opts safe for metadata-only extraction (channel info, description).
+
+    YouTube periodically changes its format manifest; yt-dlp's default format
+    selector (`bestvideo*+bestaudio/best`) then raises "Requested format is not
+    available" *during* `extract_info`, even with `skip_download=True`, because
+    format selection runs before the download is skipped. Pinning `format='best'`
+    plus `ignore_no_formats_error=True` makes metadata extraction tolerant of
+    format-graph weirdness; we never need a real video stream here.
+    """
+    return {
+        "format": "best",
+        "ignore_no_formats_error": True,
+        **ytdlp_cookie_opts(),
+    }
 
 
 # Default max attempts for fabric pattern calls when output fails validation.

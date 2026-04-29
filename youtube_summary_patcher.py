@@ -61,6 +61,9 @@ from fabric_utils import (
     extract_first_level1_header,
     generate_toc,
     promote_pseudo_header,
+    ytdlp_cookie_cli,
+    ytdlp_cookie_opts,
+    ytdlp_meta_opts,
 )
 
 
@@ -90,6 +93,7 @@ def _get_youtube_channel_info(video_url):
             'no_warnings': True,
             'extract_flat': True,
             'skip_download': True,
+            **ytdlp_meta_opts(),
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -140,7 +144,8 @@ def _get_youtube_description(video_url):
         Runs: yt-dlp --get-description <video_url>
     """
     try:
-        command = f'yt-dlp --get-description "{video_url}"'
+        cookie_flag = ytdlp_cookie_cli()
+        command = f'yt-dlp {cookie_flag} --get-description "{video_url}"'.strip()
         result = subprocess.run(command, shell=True, capture_output=True, text=True)
         if result.returncode == 0:
             return result.stdout.strip()

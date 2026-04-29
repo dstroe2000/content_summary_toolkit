@@ -56,6 +56,9 @@ from fabric_utils import (
     generate_toc,
     promote_pseudo_header,
     run_command,
+    ytdlp_cookie_cli,
+    ytdlp_cookie_opts,
+    ytdlp_meta_opts,
 )
 
 try:
@@ -111,6 +114,7 @@ def _get_youtube_channel_info(video_url):
             "no_warnings": True,
             "extract_flat": True,
             "skip_download": True,
+            **ytdlp_meta_opts(),
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(video_url, download=False)
@@ -129,7 +133,8 @@ def _get_youtube_channel_info(video_url):
 def _get_youtube_description(video_url):
     """Extract video description using yt-dlp."""
     try:
-        command = f'yt-dlp --get-description "{video_url}"'
+        cookie_flag = ytdlp_cookie_cli()
+        command = f'yt-dlp {cookie_flag} --get-description "{video_url}"'.strip()
         result = subprocess.run(command, shell=True, capture_output=True, text=True)
         if result.returncode == 0:
             return result.stdout.strip()
@@ -348,7 +353,9 @@ def _ensure_transcript(title, youtube_url, verbose=False):
     # Fallback: try fabric -y
     if verbose:
         print(f"    Direct download failed, trying fabric -y fallback...")
-    cmd = f'fabric -y "{youtube_url}" --transcript-with-timestamps --yt-dlp-args="--sleep-requests 2" > "{subtitle_file}"'
+    cookie_flag = ytdlp_cookie_cli()
+    yt_dlp_args = f"--sleep-requests 2 {cookie_flag}".strip()
+    cmd = f'fabric -y "{youtube_url}" --transcript-with-timestamps --yt-dlp-args="{yt_dlp_args}" > "{subtitle_file}"'
     success, output = run_command(cmd, timeout=120)
 
     if success and subtitle_file.exists() and subtitle_file.stat().st_size > 0:
@@ -383,6 +390,7 @@ def _download_transcript_ytdlp(title, youtube_url, output_file, verbose=False):
                 "subtitleslangs": ["en"],
                 "subtitlesformat": "vtt",
                 "outtmpl": os.path.join(tmpdir, "subtitle.%(ext)s"),
+                **ytdlp_meta_opts(),
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([youtube_url])
