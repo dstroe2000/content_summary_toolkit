@@ -218,6 +218,45 @@ def run_command(command, verbose=False, timeout=None):
         return False, str(e)
 
 
+def youtube_meta(video_url):
+    """Fetch uploader, channel URL and description in a single extraction.
+
+    Channel info and description come out of the same yt-dlp payload, so asking
+    for them separately doubles the requests YouTube sees per video -- which is
+    exactly what gets a batch rate-limited.
+
+    Prefers the modern handle URL (``/@name``) over the legacy ``/channel/UC...``.
+
+    Args:
+        video_url (str): YouTube video URL.
+
+    Returns:
+        tuple[str, str, str]: ``(author_name, channel_url, description)``.
+        Falls back to ``("Unknown", "", "")`` if extraction fails.
+    """
+    try:
+        import yt_dlp
+
+        ydl_opts = {"quiet": True, "no_warnings": True,
+                    "skip_download": True, **ytdlp_meta_opts()}
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_url, download=False) or {}
+
+        author = info.get("uploader") or info.get("channel") or "Unknown"
+        uploader_url = info.get("uploader_url") or ""
+        channel_url = info.get("channel_url") or ""
+        # Handle format lives in whichever field actually carries the '@'.
+        if "/@" in uploader_url:
+            channel_url = uploader_url
+        elif "/@" not in channel_url and uploader_url:
+            channel_url = uploader_url
+
+        return author, channel_url, (info.get("description") or "").strip()
+    except Exception as e:
+        print(f"Warning: Could not extract video metadata: {e}")
+        return "Unknown", "", ""
+
+
 def fetch_transcript(video_url, dest_path):
     """Download a YouTube transcript to ``dest_path`` as ``[HH:MM:SS] text`` lines.
 
@@ -230,10 +269,17 @@ def fetch_transcript(video_url, dest_path):
         video_url (str): YouTube video URL.
         dest_path (str): File to write the timestamped transcript to.
 
+    A non-empty ``dest_path`` is reused as-is, making reruns resumable and free.
+    Delete the file to force a re-download.
+
     Returns:
         tuple[bool, str]: ``(success, error_reason)``. ``error_reason`` is ``""``
         on success.
     """
+    if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
+        print(f"... reusing cached transcript {dest_path}")
+        return True, ""
+
     tmpdir = tempfile.mkdtemp(prefix="transcript_")
     try:
         # ponytail: same yt-dlp recipe regen_from_subs.sh already proved works.

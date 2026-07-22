@@ -33,126 +33,22 @@ Example:
     python youtube_summary_generator.py "[Learn RAG From Scratch](https://www.youtube.com/watch?v=sVcwVQRHIc8)"
 """
 
-import subprocess
 import re
 import shlex
 import sys
 import os
-import yt_dlp
 
 from fabric_utils import (
     FabricTimeout,
     fetch_transcript,
     generate_toc,
-    run_command,
     run_fabric_with_retry,
-    ytdlp_cookie_cli,
-    ytdlp_cookie_opts,
-    ytdlp_meta_opts,
+    youtube_meta,
 )
 
 # Status returned by process_youtube_entry() when the transcript could not be
 # fetched, so the batch runner can count subtitle failures separately.
 SUBTITLE_ERROR = "subtitle_error"
-
-
-def _get_youtube_channel_info(video_url):
-    """
-    Extract YouTube channel information from video URL using yt-dlp.
-
-    Prefers modern handle format (@username) over legacy channel ID format.
-
-    Args:
-        video_url (str): YouTube video URL
-
-    Returns:
-        tuple: (author_name, channel_url) or (None, None) if extraction fails
-
-    Example:
-        author, channel = _get_youtube_channel_info("https://www.youtube.com/watch?v=sVcwVQRHIc8")
-        # Returns: ("freeCodeCamp.org", "https://www.youtube.com/@freecodecamp")
-
-    Note:
-        Prefers handle format (https://www.youtube.com/@username) over
-        legacy channel ID format (https://www.youtube.com/channel/UC...)
-    """
-    try:
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': True,
-            'skip_download': True,
-            **ytdlp_meta_opts(),
-        }
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(video_url, download=False)
-
-            # Get author name
-            author_name = info.get('uploader', info.get('channel', 'Unknown'))
-
-            # Try to get channel URL, preferring handle format over channel ID
-            channel_url = info.get('channel_url', '')
-            uploader_url = info.get('uploader_url', '')
-
-            # Prefer handle format (@username) over channel ID (UC...)
-            # Handle format contains '@', channel ID format contains '/channel/'
-            if uploader_url and '/@' in uploader_url:
-                # Modern handle format found in uploader_url
-                channel_url = uploader_url
-            elif channel_url and '/@' in channel_url:
-                # Modern handle format found in channel_url
-                pass  # Already using channel_url
-            elif uploader_url:
-                # Fallback to uploader_url if no handle found
-                channel_url = uploader_url
-            # else: keep channel_url as is (may be legacy format or empty)
-
-            return author_name, channel_url
-    except Exception as e:
-        print(f"Warning: Could not extract channel info: {e}")
-        return None, None
-
-
-def _get_youtube_description(video_url):
-    """
-    Extract video description from YouTube URL using yt-dlp.
-
-    This retrieves the original description text written by the video creator.
-
-    Args:
-        video_url (str): YouTube video URL
-
-    Returns:
-        str: Video description text, or empty string if extraction fails
-
-    Example:
-        description = _get_youtube_description("https://www.youtube.com/watch?v=sVcwVQRHIc8")
-        # Returns: The video's description text as written by the creator
-
-    Implementation:
-        Runs: yt-dlp --get-description <video_url>
-    """
-    try:
-        cookie_flag = ytdlp_cookie_cli()
-        # -f best --ignore-no-formats-error mirrors ytdlp_meta_opts(): format
-        # selection runs even for metadata-only calls and otherwise aborts with
-        # "Requested format is not available". env -u NODE_OPTIONS keeps a
-        # sandboxed node from breaking yt-dlp's n-challenge solver.
-        command = (
-            f'env -u NODE_OPTIONS yt-dlp {cookie_flag} -f best --ignore-no-formats-error '
-            f'--get-description {shlex.quote(video_url)}'
-        ).strip()
-        result = subprocess.run(command, shell=True, capture_output=True, text=True)
-        if result.returncode == 0:
-            return result.stdout.strip()
-        else:
-            print(f"Warning: Could not extract video description")
-            print(f"Error output: {result.stderr}")
-            return ""
-    except Exception as e:
-        print(f"Warning: Could not extract video description: {e}")
-        return ""
 
 
 def process_youtube_entry(entry):
@@ -162,10 +58,9 @@ def process_youtube_entry(entry):
     Pipeline:
     1. Parse entry to extract title and reference (YouTube URL)
     2. Validate that reference is a YouTube URL
-    3. Extract YouTube channel information (author name and channel URL) using yt-dlp
-    4. Extract video description using yt-dlp
-    5. Ensure subtitle/ and generated/ folders exist (create if needed)
-    6. Get transcript via: fabric -y '{reference}' --transcript-with-timestamps > 'subtitle/{title}.txt'
+    3. Extract channel name, channel URL and description in one yt-dlp call
+    4. Ensure subtitle/ and generated/ folders exist (create if needed)
+    5. Get transcript via yt-dlp into 'subtitle/{title}.txt' (reused if already present)
     7. Get summary via: cat 'subtitle/{title}.txt' | fabric -p summarize
     8. Get YouTube summary via: cat 'subtitle/{title}.txt' | fabric -p youtube_summary
     9. Get extract wisdom via: cat 'subtitle/{title}.txt' | fabric -p extract_wisdom
@@ -235,24 +130,17 @@ def process_youtube_entry(entry):
 
     print(f"Processing: {title}")
 
-    # Extract YouTube channel information using yt-dlp
-    print("Extracting channel information...")
-    author_name, channel_url = _get_youtube_channel_info(reference)
-    if author_name and channel_url:
+    # Channel info and description ship in the same yt-dlp payload; one call.
+    print("Extracting channel information and description...")
+    author_name, channel_url, video_description = youtube_meta(reference)
+    if channel_url:
         print(f"Channel: {author_name} ({channel_url})")
     else:
         print("Warning: Could not extract channel information, using defaults")
-        author_name = "Unknown"
-        channel_url = ""
-
-    # Extract video description using yt-dlp
-    print("Extracting video description...")
-    video_description = _get_youtube_description(reference)
     if video_description:
         print(f"Description extracted ({len(video_description)} characters)")
     else:
         print("Warning: Could not extract video description")
-        video_description = ""
 
     # Ensure output folders exist prior to generating files
     # Create subtitle/ and generated/ directories if they don't exist
