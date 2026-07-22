@@ -1,0 +1,15 @@
+# Generated content: subtitles, blog captures and fabric summaries (hundreds of MB)
+output/
+
+# Batch input lists (personal reading queues, not project code)
+input/
+
+# Resumable-run progress markers
+.regen*_progress.txt
+
+# Python
+__pycache__/
+*.py[cod]
+
+# macOS
+.DS_Store

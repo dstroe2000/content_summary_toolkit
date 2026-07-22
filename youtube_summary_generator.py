@@ -35,11 +35,13 @@ Example:
 
 import subprocess
 import re
+import shlex
 import sys
 import os
 import yt_dlp
 
 from fabric_utils import (
+    fetch_transcript,
     generate_toc,
     run_command,
     run_fabric_with_retry,
@@ -47,6 +49,10 @@ from fabric_utils import (
     ytdlp_cookie_opts,
     ytdlp_meta_opts,
 )
+
+# Status returned by process_youtube_entry() when the transcript could not be
+# fetched, so the batch runner can count subtitle failures separately.
+SUBTITLE_ERROR = "subtitle_error"
 
 
 def _get_youtube_channel_info(video_url):
@@ -128,7 +134,14 @@ def _get_youtube_description(video_url):
     """
     try:
         cookie_flag = ytdlp_cookie_cli()
-        command = f'yt-dlp {cookie_flag} --get-description "{video_url}"'.strip()
+        # -f best --ignore-no-formats-error mirrors ytdlp_meta_opts(): format
+        # selection runs even for metadata-only calls and otherwise aborts with
+        # "Requested format is not available". env -u NODE_OPTIONS keeps a
+        # sandboxed node from breaking yt-dlp's n-challenge solver.
+        command = (
+            f'env -u NODE_OPTIONS yt-dlp {cookie_flag} -f best --ignore-no-formats-error '
+            f'--get-description {shlex.quote(video_url)}'
+        ).strip()
         result = subprocess.run(command, shell=True, capture_output=True, text=True)
         if result.returncode == 0:
             return result.stdout.strip()
@@ -246,15 +259,24 @@ def process_youtube_entry(entry):
     os.makedirs("output/subtitle", exist_ok=True)
     os.makedirs("output/yt_generated", exist_ok=True)
 
-    # Get transcript using fabric
+    # Get transcript via yt-dlp (cookie-authenticated). shlex.quote prevents shell
+    # expansion of $$, $VAR, backticks etc. in title-derived filenames or URLs.
     subtitle_file = f"output/subtitle/{title}.txt"
-    reference_cmd = f"""fabric -y "{reference}" --transcript-with-timestamps > "{subtitle_file}" """
-    run_command(reference_cmd)
+    subtitle_q = shlex.quote(subtitle_file)
+    ok, reason = fetch_transcript(reference, subtitle_file)
+
+    # Abort before the fabric patterns: summarizing an empty transcript yields a
+    # confidently fabricated note, which is worse than no note at all.
+    if not ok or os.path.getsize(subtitle_file) == 0:
+        print(f"\n!!! SUBTITLE ERROR: {title}\n    {reason or 'empty transcript file'}\n")
+        if os.path.exists(subtitle_file) and os.path.getsize(subtitle_file) == 0:
+            os.remove(subtitle_file)
+        return SUBTITLE_ERROR
     print(f"""... generated "{subtitle_file}" subtitle file \n""")
 
     # Get summary using fabric's summarize pattern (retry + pseudo-header fallback)
     print("Getting summary ...")
-    summary_cmd = f"""cat "{subtitle_file}" | fabric -p summarize"""
+    summary_cmd = f"cat {subtitle_q} | fabric -p summarize"
     success, filtered_summary, header_summarize = run_fabric_with_retry(
         summary_cmd, "summarize")
     if not success:
@@ -264,7 +286,7 @@ def process_youtube_entry(entry):
 
     # Get YouTube summary using fabric's youtube_summary pattern
     print("Getting YouTube summary...")
-    yt_summary_cmd = f"""cat "{subtitle_file}" | fabric -p youtube_summary"""
+    yt_summary_cmd = f"cat {subtitle_q} | fabric -p youtube_summary"
     success, filtered_youtube_summary, header_youtube = run_fabric_with_retry(
         yt_summary_cmd, "youtube_summary")
     if not success:
@@ -274,7 +296,7 @@ def process_youtube_entry(entry):
 
     # Extract wisdom using fabric's extract_wisdom pattern
     print("Extracting YouTube Wisdom ...")
-    wisdom_cmd = f"""cat "{subtitle_file}" | fabric -p extract_wisdom"""
+    wisdom_cmd = f"cat {subtitle_q} | fabric -p extract_wisdom"
     success, filtered_extract_wisdom, header_wisdom = run_fabric_with_retry(
         wisdom_cmd, "extract_wisdom")
     if not success:

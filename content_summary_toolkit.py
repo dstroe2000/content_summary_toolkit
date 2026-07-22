@@ -24,7 +24,7 @@ import sys
 import re
 import os
 import time
-from youtube_summary_generator import process_youtube_entry
+from youtube_summary_generator import process_youtube_entry, SUBTITLE_ERROR
 from blog_summary_generator import process_blog_entry
 
 
@@ -94,18 +94,20 @@ def _process_youtube(entry):
         entry (str): Markdown-formatted entry "[title](youtube-url)"
 
     Returns:
-        bool: True if processing succeeded, False otherwise
+        str: 'ok' on success, SUBTITLE_ERROR if the transcript couldn't be
+        fetched, 'error' for any other failure.
 
     Side Effects:
         - Calls process_youtube_entry() which prints output and creates files
         - Prints errors to stdout if processing fails
     """
     try:
-        process_youtube_entry(entry)
-        return True
+        if process_youtube_entry(entry) == SUBTITLE_ERROR:
+            return SUBTITLE_ERROR
+        return 'ok'
     except Exception as e:
         print(f"  Error: Exception processing YouTube entry: {e}")
-        return False
+        return 'error'
 
 
 def _process_blog(entry):
@@ -143,6 +145,7 @@ def _print_summary_report(stats, elapsed_time):
             - processed_blog (int): Successfully processed blog entries
             - skipped (int): Skipped lines (empty, headers, commentary)
             - invalid (int): Invalid format lines
+            - subtitle_errors (int): Entries aborted because no transcript could be fetched
             - errors (list): List of error messages
         elapsed_time (float): Total time taken for batch processing in seconds
 
@@ -157,6 +160,7 @@ def _print_summary_report(stats, elapsed_time):
     print(f"Blog processed:        {stats['processed_blog']}")
     print(f"Skipped:              {stats['skipped']}")
     print(f"Invalid format:       {stats['invalid']}")
+    print(f"Subtitle errors:      {stats.get('subtitle_errors', 0)}")
     print(f"Errors:               {len(stats['errors'])}")
 
     # Calculate success rate
@@ -236,6 +240,7 @@ def process_batch_file(batch_file_path):
         'processed_blog': 0,
         'skipped': 0,
         'invalid': 0,
+        'subtitle_errors': 0,
         'errors': []
     }
 
@@ -258,9 +263,14 @@ def process_batch_file(batch_file_path):
                 elif entry_type == 'YOUTUBE':
                     entry = f"[{title}]({url})"
                     print(f"Line {line_num}: Processing YouTube - \"{title}\"")
-                    success = _process_youtube(entry)
-                    if success:
+                    result = _process_youtube(entry)
+                    if result == 'ok':
                         stats['processed_youtube'] += 1
+                    elif result == SUBTITLE_ERROR:
+                        stats['subtitle_errors'] += 1
+                        error_msg = f"Line {line_num}: SUBTITLE ERROR - {title}"
+                        stats['errors'].append(error_msg)
+                        print(f"  Subtitle errors so far: {stats['subtitle_errors']}")
                     else:
                         error_msg = f"Line {line_num}: YouTube processing failed - {title}"
                         stats['errors'].append(error_msg)

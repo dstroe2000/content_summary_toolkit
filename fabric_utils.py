@@ -18,8 +18,10 @@ default "must contain a level-1 header" rule.
 
 import os
 import re
+import shutil
 import subprocess
 import shlex
+import tempfile
 
 
 # Browser to pull YouTube auth cookies from. Many videos (age-gated, members-only,
@@ -192,6 +194,73 @@ def run_command(command, verbose=False, timeout=None):
         return False, "Command timed out"
     except Exception as e:
         return False, str(e)
+
+
+def fetch_transcript(video_url, dest_path):
+    """Download a YouTube transcript to ``dest_path`` as ``[HH:MM:SS] text`` lines.
+
+    Uses yt-dlp with browser cookies instead of ``fabric -y``: fabric's internal
+    fetcher carries no cookies and gets "YouTube rate limit exceeded" on most
+    requests, writing an empty file that downstream patterns then summarize into
+    fabricated content.
+
+    Args:
+        video_url (str): YouTube video URL.
+        dest_path (str): File to write the timestamped transcript to.
+
+    Returns:
+        tuple[bool, str]: ``(success, error_reason)``. ``error_reason`` is ``""``
+        on success.
+    """
+    tmpdir = tempfile.mkdtemp(prefix="transcript_")
+    try:
+        # ponytail: same yt-dlp recipe regen_from_subs.sh already proved works.
+        # `env -u NODE_OPTIONS` stops a sandboxed node from breaking the n-challenge solver.
+        cmd = (
+            f"env -u NODE_OPTIONS yt-dlp {ytdlp_cookie_cli()} "
+            f"--write-sub --write-auto-sub --sub-lang en --convert-subs srt "
+            f"--skip-download --ignore-no-formats-error "
+            f"-o {shlex.quote(os.path.join(tmpdir, 's.%(ext)s'))} {shlex.quote(video_url)}"
+        )
+        ok, err = run_command(cmd, timeout=300)
+
+        srts = sorted(f for f in os.listdir(tmpdir) if f.endswith(".srt"))
+        if not srts:
+            return False, (err or "yt-dlp produced no subtitle file").splitlines()[-1][:200]
+
+        with open(os.path.join(tmpdir, srts[0]), "r", encoding="utf-8", errors="replace") as f:
+            lines = _srt_to_timestamped(f.read())
+
+        if not lines:
+            return False, "subtitle file contained no cues"
+
+        with open(dest_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def _srt_to_timestamped(srt_text):
+    """Convert SRT text to ``[HH:MM:SS] caption`` lines, dropping rolling repeats.
+
+    YouTube auto-subs repeat the previous cue's text at the top of the next cue;
+    consecutive duplicates are collapsed so the transcript reads once through.
+    """
+    out = []
+    for block in re.split(r"\n\s*\n", srt_text.strip()):
+        rows = [r for r in block.splitlines() if r.strip()]
+        stamp = next((r for r in rows if "-->" in r), None)
+        if stamp is None:
+            continue
+        text = " ".join(rows[rows.index(stamp) + 1:]).strip()
+        text = re.sub(r"<[^>]+>", "", text).strip()
+        if not text or (out and out[-1].endswith(text)):
+            continue
+        out.append(f"[{stamp.split('-->')[0].strip().split(',')[0]}] {text}")
+    return out
 
 
 def _default_validator(filtered_text):
