@@ -52,6 +52,7 @@ Example Output:
 import os
 import sys
 import re
+import shlex
 import argparse
 import subprocess
 import yt_dlp
@@ -145,7 +146,7 @@ def _get_youtube_description(video_url):
     """
     try:
         cookie_flag = ytdlp_cookie_cli()
-        command = f'yt-dlp {cookie_flag} --get-description "{video_url}"'.strip()
+        command = f'yt-dlp {cookie_flag} --get-description {shlex.quote(video_url)}'.strip()
         result = subprocess.run(command, shell=True, capture_output=True, text=True)
         if result.returncode == 0:
             return result.stdout.strip()

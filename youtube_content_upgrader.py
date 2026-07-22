@@ -44,6 +44,7 @@ import re
 import sys
 import json
 import time
+import shlex
 import shutil
 import argparse
 import subprocess
@@ -134,7 +135,7 @@ def _get_youtube_description(video_url):
     """Extract video description using yt-dlp."""
     try:
         cookie_flag = ytdlp_cookie_cli()
-        command = f'yt-dlp {cookie_flag} --get-description "{video_url}"'.strip()
+        command = f'yt-dlp {cookie_flag} --get-description {shlex.quote(video_url)}'.strip()
         result = subprocess.run(command, shell=True, capture_output=True, text=True)
         if result.returncode == 0:
             return result.stdout.strip()
@@ -355,7 +356,11 @@ def _ensure_transcript(title, youtube_url, verbose=False):
         print(f"    Direct download failed, trying fabric -y fallback...")
     cookie_flag = ytdlp_cookie_cli()
     yt_dlp_args = f"--sleep-requests 2 {cookie_flag}".strip()
-    cmd = f'fabric -y "{youtube_url}" --transcript-with-timestamps --yt-dlp-args="{yt_dlp_args}" > "{subtitle_file}"'
+    # shlex.quote prevents shell expansion of $$, $VAR, backticks etc.
+    cmd = (
+        f'fabric -y {shlex.quote(youtube_url)} --transcript-with-timestamps '
+        f'--yt-dlp-args={shlex.quote(yt_dlp_args)} > {shlex.quote(str(subtitle_file))}'
+    )
     success, output = run_command(cmd, timeout=120)
 
     if success and subtitle_file.exists() and subtitle_file.stat().st_size > 0:
@@ -495,7 +500,7 @@ def _run_fabric_pattern(pattern_name, subtitle_file, verbose=False):
             attempt_str = f" (attempt {attempt}/{MAX_RETRIES})" if attempt > 1 else ""
             print(f"    Running fabric -p {pattern_name}{attempt_str}...")
 
-        cmd = f'cat "{subtitle_file}" | fabric -p {pattern_name}'
+        cmd = f'cat {shlex.quote(str(subtitle_file))} | fabric -p {pattern_name}'
         success, output = run_command(cmd, timeout=300)
 
         if not success:

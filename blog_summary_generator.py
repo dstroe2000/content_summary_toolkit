@@ -30,6 +30,7 @@ Example:
 """
 
 import re
+import shlex
 import sys
 import os
 
@@ -105,15 +106,18 @@ def process_blog_entry(entry):
     os.makedirs("output/blog", exist_ok=True)
     os.makedirs("output/blog_generated", exist_ok=True)
 
-    # Get blog_file using fabric
+    # Get blog_file using fabric. shlex.quote prevents shell expansion of
+    # $$, $VAR, backticks etc. in title-derived filenames or URLs.
     blog_file = f"output/blog/{title}.md"
-    reference_cmd = f"""fabric -u "{reference}"  > "{blog_file}" """
+    blog_q = shlex.quote(blog_file)
+    reference_q = shlex.quote(reference)
+    reference_cmd = f"fabric -u {reference_q}  > {blog_q}"
     run_command(reference_cmd)
     print(f"... generated '{blog_file}' blog file \n")
 
     # Get summary using fabric's summarize pattern (retry + pseudo-header fallback)
     print("Getting Blog summary ...")
-    summary_cmd = f"""cat "{blog_file}" | fabric -p summarize"""
+    summary_cmd = f"cat {blog_q} | fabric -p summarize"
     success, filtered_summary, header_summarize = run_fabric_with_retry(
         summary_cmd, "summarize")
     if not success:
@@ -123,7 +127,7 @@ def process_blog_entry(entry):
 
     # Extract wisdom using fabric's extract_wisdom pattern
     print("Extracting Blog Wisdom ...")
-    wisdom_cmd = f"""cat "{blog_file}" | fabric -p extract_wisdom"""
+    wisdom_cmd = f"cat {blog_q} | fabric -p extract_wisdom"
     success, filtered_extract_wisdom, header_wisdom = run_fabric_with_retry(
         wisdom_cmd, "extract_wisdom")
     if not success:

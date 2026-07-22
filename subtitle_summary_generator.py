@@ -30,6 +30,7 @@ Example:
 
 import sys
 import argparse
+import shlex
 import time
 from pathlib import Path
 
@@ -159,13 +160,14 @@ def process_subtitle_file(file_path, overwrite=False, verbose=False):
         result['reason'] = f'Read error: {e}'
         return result
 
-    # Run fabric patterns
-    file_path_str = str(file_path)
+    # Run fabric patterns. shlex.quote prevents shell expansion in paths
+    # containing $$, $VAR, backticks, etc. (subprocess uses shell=True).
+    file_path_q = shlex.quote(str(file_path))
 
     # 1. Get summary using fabric's summarize pattern (retry if no H1 header)
     if verbose:
         print("  Getting summary...")
-    summary_cmd = f'cat "{file_path_str}" | fabric -p summarize'
+    summary_cmd = f'cat {file_path_q} | fabric -p summarize'
     success, filtered_summary, header_summarize = run_fabric_with_retry(
         summary_cmd, "summarize", verbose)
     if not success:
@@ -175,7 +177,7 @@ def process_subtitle_file(file_path, overwrite=False, verbose=False):
     # 2. Get YouTube summary using fabric's youtube_summary pattern (retry if no H1 header)
     if verbose:
         print("  Getting YouTube summary...")
-    yt_summary_cmd = f'cat "{file_path_str}" | fabric -p youtube_summary'
+    yt_summary_cmd = f'cat {file_path_q} | fabric -p youtube_summary'
     success, filtered_youtube_summary, header_youtube = run_fabric_with_retry(
         yt_summary_cmd, "youtube_summary", verbose)
     if not success:
@@ -185,7 +187,7 @@ def process_subtitle_file(file_path, overwrite=False, verbose=False):
     # 3. Extract wisdom using fabric's extract_wisdom pattern (retry if no H1 header)
     if verbose:
         print("  Extracting wisdom...")
-    wisdom_cmd = f'cat "{file_path_str}" | fabric -p extract_wisdom'
+    wisdom_cmd = f'cat {file_path_q} | fabric -p extract_wisdom'
     success, filtered_extract_wisdom, header_wisdom = run_fabric_with_retry(
         wisdom_cmd, "extract_wisdom", verbose)
     if not success:
