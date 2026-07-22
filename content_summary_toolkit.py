@@ -25,6 +25,7 @@ import re
 import os
 import time
 from youtube_summary_generator import process_youtube_entry, SUBTITLE_ERROR
+from fabric_utils import FabricTimeout
 from blog_summary_generator import process_blog_entry
 
 
@@ -94,8 +95,10 @@ def _process_youtube(entry):
         entry (str): Markdown-formatted entry "[title](youtube-url)"
 
     Returns:
-        str: 'ok' on success, SUBTITLE_ERROR if the transcript couldn't be
-        fetched, 'error' for any other failure.
+        str | FabricTimeout: 'ok' on success, SUBTITLE_ERROR if the transcript
+        couldn't be fetched, the FabricTimeout instance if a pattern stalled
+        (it carries pattern/elapsed/transcript size for reporting), 'error'
+        for any other failure.
 
     Side Effects:
         - Calls process_youtube_entry() which prints output and creates files
@@ -105,6 +108,8 @@ def _process_youtube(entry):
         if process_youtube_entry(entry) == SUBTITLE_ERROR:
             return SUBTITLE_ERROR
         return 'ok'
+    except FabricTimeout as e:
+        return e
     except Exception as e:
         print(f"  Error: Exception processing YouTube entry: {e}")
         return 'error'
@@ -146,6 +151,7 @@ def _print_summary_report(stats, elapsed_time):
             - skipped (int): Skipped lines (empty, headers, commentary)
             - invalid (int): Invalid format lines
             - subtitle_errors (int): Entries aborted because no transcript could be fetched
+            - timeout_errors (int): Entries aborted because a fabric pattern exceeded FABRIC_TIMEOUT
             - errors (list): List of error messages
         elapsed_time (float): Total time taken for batch processing in seconds
 
@@ -161,6 +167,7 @@ def _print_summary_report(stats, elapsed_time):
     print(f"Skipped:              {stats['skipped']}")
     print(f"Invalid format:       {stats['invalid']}")
     print(f"Subtitle errors:      {stats.get('subtitle_errors', 0)}")
+    print(f"Timeout errors:       {stats.get('timeout_errors', 0)}")
     print(f"Errors:               {len(stats['errors'])}")
 
     # Calculate success rate
@@ -241,6 +248,7 @@ def process_batch_file(batch_file_path):
         'skipped': 0,
         'invalid': 0,
         'subtitle_errors': 0,
+        'timeout_errors': 0,
         'errors': []
     }
 
@@ -271,6 +279,14 @@ def process_batch_file(batch_file_path):
                         error_msg = f"Line {line_num}: SUBTITLE ERROR - {title}"
                         stats['errors'].append(error_msg)
                         print(f"  Subtitle errors so far: {stats['subtitle_errors']}")
+                    elif isinstance(result, FabricTimeout):
+                        stats['timeout_errors'] += 1
+                        error_msg = (
+                            f"Line {line_num}: TIMEOUT ({result.pattern_label}, "
+                            f"{result.elapsed:.0f}s, {result.transcript_kb:.0f} KB) - {title}"
+                        )
+                        stats['errors'].append(error_msg)
+                        print(f"  Timeout errors so far: {stats['timeout_errors']}")
                     else:
                         error_msg = f"Line {line_num}: YouTube processing failed - {title}"
                         stats['errors'].append(error_msg)

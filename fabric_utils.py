@@ -74,6 +74,28 @@ def ytdlp_meta_opts():
 # promotion.
 MAX_FABRIC_ATTEMPTS = 3
 
+# Seconds a single fabric pattern may run before it is treated as failed.
+# Without this, subprocess.run(timeout=None) blocks the whole batch forever
+# when the LLM backend stalls -- a 68k-token transcript against a local
+# llama.cpp server is slow enough that "slow" and "hung" look identical.
+# Override with env var FABRIC_TIMEOUT.
+FABRIC_TIMEOUT = int(os.environ.get("FABRIC_TIMEOUT", 420))
+
+
+class FabricTimeout(Exception):
+    """Raised when a fabric pattern exceeds its timeout.
+
+    Carries enough context for the batch runner to report *what* stalled:
+    the pattern name, the limit it blew through, and how long it actually ran.
+    """
+
+    def __init__(self, pattern_label, limit, elapsed):
+        self.pattern_label = pattern_label
+        self.limit = limit
+        self.elapsed = elapsed
+        super().__init__(
+            f"fabric -p {pattern_label} exceeded {limit}s (ran {elapsed:.0f}s)")
+
 
 def filter_think_sections(text):
     """Remove ``<think>...</think>`` blocks from LLM/fabric output.
@@ -280,7 +302,7 @@ def run_fabric_with_retry(
     verbose=False,
     max_attempts=MAX_FABRIC_ATTEMPTS,
     validate=None,
-    timeout=None,
+    timeout=FABRIC_TIMEOUT,
     retry_delay=0,
 ):
     """Run a fabric command with retry + pseudo-header promotion fallback.
@@ -324,8 +346,14 @@ def run_fabric_with_retry(
     any_success = False
 
     for attempt in range(1, max_attempts + 1):
+        started = time.time()
         success, raw = run_command(command, verbose=verbose, timeout=timeout)
         if not success:
+            # A timeout means the model never answered. Retrying just burns
+            # another full `timeout` on the same oversized input, so give up
+            # immediately and let the caller count it as its own failure class.
+            if raw == "Command timed out":
+                raise FabricTimeout(pattern_label, timeout, time.time() - started)
             if verbose:
                 snippet = raw[:100] if raw else ""
                 print(f"  [{pattern_label}] attempt {attempt}/{max_attempts}: fabric failed ({snippet})")
