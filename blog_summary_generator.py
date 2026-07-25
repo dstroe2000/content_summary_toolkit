@@ -4,12 +4,15 @@ Blog Summary Generator
 This module processes blog/article URLs and generates structured markdown summaries.
 
 Entry Format:
-    [title](reference)
+    [title](reference)   or   a bare article URL
 
     Where:
     - title: The title under square brackets [title]
     - reference: The blog/article URL under round brackets (reference)
     - Note: YouTube URLs are explicitly skipped by this script
+
+    A bare URL carries no title, so the page is fetched and its og:title (or
+    <title>) is used, cleaned to the vault's filename conventions.
 
 Output:
     Creates three folders if they don't exist:
@@ -36,9 +39,13 @@ import os
 
 from fabric_utils import (
     generate_toc,
+    page_title,
     run_command,
     run_fabric_with_retry,
 )
+
+# A line that is nothing but a URL -- the title has to come from the page itself.
+BARE_URL_RE = re.compile(r'^https?://\S+$')
 
 
 def process_blog_entry(entry):
@@ -84,19 +91,33 @@ def process_blog_entry(entry):
     """
 
     # Parse the entry to extract title and reference
-    # Expected format: [title](reference)
-    match = re.match(r'\[([^\]]+)\]\(([^)]+)\)', entry.strip())
-    if not match:
-        print("Invalid entry format. Expected: [title](reference)")
+    # Expected format: [title](reference), or a bare URL with no title at all
+    entry = entry.strip()
+    match = re.match(r'\[([^\]]+)\]\(([^)]+)\)', entry)
+    if match:
+        title = match.group(1).strip()
+        reference = match.group(2).strip()
+    elif BARE_URL_RE.match(entry):
+        title = None            # filled in from the page's own metadata below
+        reference = entry
+    else:
+        print("Invalid entry format. Expected: [title](reference) or a bare URL")
         return
-
-    title = match.group(1).strip()
-    reference = match.group(2).strip()
 
     # Check if it's a YouTube reference (youtube.com or youtu.be)
     if 'youtube.com' in reference or 'youtu.be' in reference:
         print("This a YouTube reference, skipping...")
         return
+
+    # A bare-URL entry has no title to name files with. Bail rather than write
+    # to a placeholder filename that no later run would ever match.
+    if title is None:
+        print("Fetching article title...")
+        title = page_title(reference)
+        if not title:
+            print(f"\n!!! TITLE ERROR: could not fetch a title for {reference}\n")
+            return False
+        print(f"Title from page: {title}")
 
     print(f"Processing: {title}")
 

@@ -80,7 +80,7 @@ def process_srt(srt_path, title, url, output_folder, overwrite=False, verbose=Fa
     # doubles the requests YouTube sees per video, which is what gets a batch
     # rate-limited.
     print(f"  metadata ...")
-    author, channel_url, description = youtube_meta(url)
+    author, channel_url, description, _title = youtube_meta(url)
 
     srt_q = shlex.quote(str(srt_path))
     print(f"  fabric summarize ...")

@@ -4,11 +4,15 @@ YouTube Summary Generator
 This module processes YouTube video entries and generates structured markdown summaries.
 
 Entry Format:
-    [title](reference)
+    [title](reference)   or   a bare YouTube URL
 
     Where:
     - title: The title under square brackets [title]
     - reference: The YouTube URL under round brackets (reference)
+
+    A bare URL carries no title, so the title is taken from yt-dlp metadata
+    (same call that fetches channel + description) and run through
+    fabric_utils.clean_title() to match the vault's filename conventions.
 
 Output:
     Creates three folders if they don't exist:
@@ -31,6 +35,7 @@ External Dependencies:
 
 Example:
     python youtube_summary_generator.py "[Learn RAG From Scratch](https://www.youtube.com/watch?v=sVcwVQRHIc8)"
+    python youtube_summary_generator.py "https://www.youtube.com/watch?v=sVcwVQRHIc8"
 """
 
 import re
@@ -40,11 +45,15 @@ import os
 
 from fabric_utils import (
     FabricTimeout,
+    clean_title,
     fetch_transcript,
     generate_toc,
     run_fabric_with_retry,
     youtube_meta,
 )
+
+# A line that is nothing but a URL -- the title has to come from the source.
+BARE_URL_RE = re.compile(r'^https?://\S+$')
 
 # Status returned by process_youtube_entry() when the transcript could not be
 # fetched, so the batch runner can count subtitle failures separately.
@@ -114,25 +123,38 @@ def process_youtube_entry(entry):
     """
 
     # Parse the entry to extract title and reference
-    # Expected format: [title](reference)
-    match = re.match(r'\[([^\]]+)\]\(([^)]+)\)', entry.strip())
-    if not match:
-        print("Invalid entry format. Expected: [title](reference)")
+    # Expected format: [title](reference), or a bare URL with no title at all
+    entry = entry.strip()
+    match = re.match(r'\[([^\]]+)\]\(([^)]+)\)', entry)
+    if match:
+        title = match.group(1).strip()
+        reference = match.group(2).strip()
+    elif BARE_URL_RE.match(entry):
+        title = None            # filled in from yt-dlp metadata below
+        reference = entry
+    else:
+        print("Invalid entry format. Expected: [title](reference) or a bare URL")
         return
-
-    title = match.group(1).strip()
-    reference = match.group(2).strip()
 
     # Check if it's a YouTube reference (youtube.com or youtu.be)
     if 'youtube.com' not in reference and 'youtu.be' not in reference:
         print("Not a YouTube reference, skipping...")
         return
 
-    print(f"Processing: {title}")
+    print(f"Processing: {title or reference}")
 
-    # Channel info and description ship in the same yt-dlp payload; one call.
+    # Channel info, description and title ship in the same yt-dlp payload; one call.
     print("Extracting channel information and description...")
-    author_name, channel_url, video_description = youtube_meta(reference)
+    author_name, channel_url, video_description, meta_title = youtube_meta(reference)
+
+    # A bare-URL entry has no title to name files with. Bail rather than write
+    # to a placeholder filename that no later run would ever match.
+    if title is None:
+        title = clean_title(meta_title)
+        if not title:
+            print(f"\n!!! TITLE ERROR: could not fetch a title for {reference}\n")
+            return 'error'
+        print(f"Title from yt-dlp: {title}")
     if channel_url:
         print(f"Channel: {author_name} ({channel_url})")
     else:

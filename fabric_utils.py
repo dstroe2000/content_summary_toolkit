@@ -16,12 +16,90 @@ so individual tools can layer their own quality checks on top of the
 default "must contain a level-1 header" rule.
 """
 
+import html
 import os
 import re
 import shutil
 import subprocess
 import shlex
 import tempfile
+import urllib.request
+
+
+# Title cleanup: unicode -> ascii (nbsp becomes a plain space).
+CHAR_REP = {"\xa0": " ", "’": "'", "‘": "'",
+            "“": '"', "”": '"', "…": "..."}
+
+
+def clean_title(title):
+    """Apply the vault-title conventions to a raw YouTube/article title.
+
+    Ported from the ``id-missing-yt`` skill so titles fetched here land under
+    the same filenames that skill would have produced -- otherwise the same
+    video ingested by URL and by ``[title](url)`` becomes two different notes.
+
+    Strips Obsidian/macOS-illegal filename chars: ``: ? ! / \\ | " < > *``.
+    ``/`` would make a subfolder, ``|`` breaks wikilink aliases, a leading dot
+    makes a hidden note -- so leading dots are dropped. Trailing periods are
+    KEPT (full-sentence titles legitimately end in '.'). ``#`` becomes ``num ``
+    because a '#' in a basename reads as a heading anchor and breaks wikilinks.
+
+    Idempotent: cleaning an already-clean title is a no-op.
+
+    Args:
+        title (str): Raw title as published by the source.
+
+    Returns:
+        str: Title safe to use as a note/subtitle filename.
+    """
+    for k, v in CHAR_REP.items():
+        title = title.replace(k, v)
+    title = re.sub(r"\s*:\s*", " - ", title)       # any colon -> ' - '
+    title = re.sub(r"\s*[?!]+\s+", " - ", title)   # '? '/'! '/'?! ' -> ' - '
+    title = re.sub(r"[?!]+", "", title)            # leftover ?/! -> drop
+    title = re.sub(r"[/\\|]", "-", title)          # '/' subfolder, '|' alias-break
+    title = title.replace('"', "")                 # illegal; keep ' which Obsidian allows
+    title = re.sub(r"[<>*]", "", title)            # remaining illegal filename chars
+    title = re.sub(r"#\s*", "num ", title)         # '#' breaks wikilinks -> 'num '
+    title = title.replace("[", "(").replace("]", ")")  # brackets break [title](url)
+    title = re.sub(r"\s{2,}", " ", title).strip()
+    return re.sub(r"^\.+", "", title).strip()      # drop leading dots; keep trailing
+
+
+def page_title(url, timeout=20):
+    """Fetch an article URL and return its title, or "" if it can't be read.
+
+    Prefers ``og:title`` over ``<title>``: publishers put the bare headline in
+    the Open Graph tag and append site branding ("... | BBC Future") to the
+    HTML title on many templates.
+
+    Only the first 200 KB is read -- the head is all that matters and article
+    pages routinely carry hundreds of KB of inlined JSON below it.
+
+    Args:
+        url (str): Article URL.
+        timeout (int): Socket timeout in seconds.
+
+    Returns:
+        str: Cleaned title, or ``""`` when the fetch or the parse fails.
+    """
+    try:
+        # Default urllib UA is blocked by most CDNs; a browser UA gets served.
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read(200_000).decode("utf-8", "replace")
+    except Exception as e:
+        print(f"Warning: Could not fetch page title: {e}")
+        return ""
+
+    for pattern in (r"<meta[^>]+property=[\"']og:title[\"'][^>]*content=[\"']([^\"']+)",
+                    r"<title[^>]*>(.*?)</title>"):
+        m = re.search(pattern, body, re.IGNORECASE | re.DOTALL)
+        if m:
+            title = clean_title(html.unescape(m.group(1)).strip())
+            if title:
+                return title
+    return ""
 
 
 # Browser to pull YouTube auth cookies from. Many videos (age-gated, members-only,
@@ -227,11 +305,12 @@ def run_command(command, verbose=False, timeout=None):
 
 
 def youtube_meta(video_url):
-    """Fetch uploader, channel URL and description in a single extraction.
+    """Fetch uploader, channel URL, description and title in a single extraction.
 
-    Channel info and description come out of the same yt-dlp payload, so asking
-    for them separately doubles the requests YouTube sees per video -- which is
-    exactly what gets a batch rate-limited.
+    Channel info, description and title come out of the same yt-dlp payload, so
+    asking for them separately doubles the requests YouTube sees per video --
+    which is exactly what gets a batch rate-limited. The title rides along free
+    so a bare-URL entry can be named without a second lookup.
 
     Prefers the modern handle URL (``/@name``) over the legacy ``/channel/UC...``.
 
@@ -239,8 +318,10 @@ def youtube_meta(video_url):
         video_url (str): YouTube video URL.
 
     Returns:
-        tuple[str, str, str]: ``(author_name, channel_url, description)``.
-        Falls back to ``("Unknown", "", "")`` if extraction fails.
+        tuple[str, str, str, str]: ``(author_name, channel_url, description, title)``.
+        ``title`` is raw (uncleaned) -- run it through ``clean_title`` before
+        using it as a filename. Falls back to ``("Unknown", "", "", "")`` if
+        extraction fails.
     """
     try:
         import yt_dlp
@@ -259,10 +340,11 @@ def youtube_meta(video_url):
         elif "/@" not in channel_url and uploader_url:
             channel_url = uploader_url
 
-        return author, channel_url, (info.get("description") or "").strip()
+        return (author, channel_url, (info.get("description") or "").strip(),
+                (info.get("title") or "").strip())
     except Exception as e:
         print(f"Warning: Could not extract video metadata: {e}")
-        return "Unknown", "", ""
+        return "Unknown", "", "", ""
 
 
 def fetch_transcript(video_url, dest_path):

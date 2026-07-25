@@ -7,6 +7,8 @@ the appropriate generator (YouTube or blog) based on entry type.
 Entry Types:
     - YouTube entries: [title](youtube-url) → routed to process_youtube_entry()
     - Blog entries: [title](blog-url) → routed to process_blog_entry()
+    - Bare URLs (no [title] wrapper) → routed by domain; the generator fetches
+      the title itself (yt-dlp for YouTube, the page's og:title for blogs)
     - Empty lines → skipped
     - Markdown headers (lines starting with #) → skipped
     - Commentary (lines starting with \\#) → skipped
@@ -28,6 +30,9 @@ from youtube_summary_generator import process_youtube_entry, SUBTITLE_ERROR
 from fabric_utils import FabricTimeout
 from blog_summary_generator import process_blog_entry
 
+# A line that is nothing but a URL: no title, so the generator fetches one.
+BARE_URL_RE = re.compile(r'^https?://\S+$')
+
 
 def _classify_entry(line):
     """
@@ -38,6 +43,9 @@ def _classify_entry(line):
     - YOUTUBE: Markdown-formatted YouTube URL entries
     - BLOG: Markdown-formatted non-YouTube URL entries
     - INVALID: Lines that don't match any expected format
+
+    A bare URL line is accepted with title=None; the generator fetches the
+    title from the source and names the note with it.
 
     Args:
         line (str): Single line from batch file
@@ -63,6 +71,9 @@ def _classify_entry(line):
 
         >>> _classify_entry("[Article](https://example.com/article)")
         ('BLOG', 'Article', 'https://example.com/article')
+
+        >>> _classify_entry("https://www.youtube.com/watch?v=yC9cd3gKaIc")
+        ('YOUTUBE', None, 'https://www.youtube.com/watch?v=yC9cd3gKaIc')
     """
     stripped = line.strip()
 
@@ -70,13 +81,17 @@ def _classify_entry(line):
     if not stripped or stripped.startswith('#') or stripped.startswith('\\#') or stripped == '---':
         return ('SKIP', None, None)
 
-    # Parse markdown format [title](url)
+    # Parse markdown format [title](url), or accept a bare URL and let the
+    # generator fetch the title from the source (yt-dlp / the page's og:title).
     match = re.match(r'\[([^\]]+)\]\(([^)]+)\)', stripped)
-    if not match:
+    if match:
+        title = match.group(1).strip()
+        url = match.group(2).strip()
+    elif BARE_URL_RE.match(stripped):
+        title = None
+        url = stripped
+    else:
         return ('INVALID', None, None)
-
-    title = match.group(1).strip()
-    url = match.group(2).strip()
 
     # Classify by URL domain
     if 'youtube.com' in url or 'youtu.be' in url:
@@ -105,8 +120,11 @@ def _process_youtube(entry):
         - Prints errors to stdout if processing fails
     """
     try:
-        if process_youtube_entry(entry) == SUBTITLE_ERROR:
+        result = process_youtube_entry(entry)
+        if result == SUBTITLE_ERROR:
             return SUBTITLE_ERROR
+        if result == 'error':   # e.g. bare URL whose title could not be fetched
+            return 'error'
         return 'ok'
     except FabricTimeout as e:
         return e
@@ -132,8 +150,10 @@ def _process_blog(entry):
         - Prints errors to stdout if processing fails
     """
     try:
-        process_blog_entry(entry)
-        return True
+        # Explicit False means the entry was rejected (e.g. bare URL with an
+        # unfetchable title); any other return keeps the legacy "no news is
+        # good news" contract.
+        return process_blog_entry(entry) is not False
     except Exception as e:
         print(f"  Error: Exception processing blog entry: {e}")
         return False
@@ -269,36 +289,40 @@ def process_batch_file(batch_file_path):
                     print(f"Line {line_num}: Skipping - Invalid format")
 
                 elif entry_type == 'YOUTUBE':
-                    entry = f"[{title}]({url})"
-                    print(f"Line {line_num}: Processing YouTube - \"{title}\"")
+                    # No title on a bare-URL line: pass the URL through as-is
+                    # so the generator names the note from yt-dlp metadata.
+                    entry = f"[{title}]({url})" if title else url
+                    print(f"Line {line_num}: Processing YouTube - \"{title or url}\"")
                     result = _process_youtube(entry)
                     if result == 'ok':
                         stats['processed_youtube'] += 1
                     elif result == SUBTITLE_ERROR:
                         stats['subtitle_errors'] += 1
-                        error_msg = f"Line {line_num}: SUBTITLE ERROR - {title}"
+                        error_msg = f"Line {line_num}: SUBTITLE ERROR - {title or url}"
                         stats['errors'].append(error_msg)
                         print(f"  Subtitle errors so far: {stats['subtitle_errors']}")
                     elif isinstance(result, FabricTimeout):
                         stats['timeout_errors'] += 1
                         error_msg = (
                             f"Line {line_num}: TIMEOUT ({result.pattern_label}, "
-                            f"{result.elapsed:.0f}s, {result.transcript_kb:.0f} KB) - {title}"
+                            f"{result.elapsed:.0f}s, {result.transcript_kb:.0f} KB) - {title or url}"
                         )
                         stats['errors'].append(error_msg)
                         print(f"  Timeout errors so far: {stats['timeout_errors']}")
                     else:
-                        error_msg = f"Line {line_num}: YouTube processing failed - {title}"
+                        error_msg = f"Line {line_num}: YouTube processing failed - {title or url}"
                         stats['errors'].append(error_msg)
 
                 elif entry_type == 'BLOG':
-                    entry = f"[{title}]({url})"
-                    print(f"Line {line_num}: Processing Blog - \"{title}\"")
+                    # Same as YouTube: bare URL goes through untouched and the
+                    # generator reads the title off the page.
+                    entry = f"[{title}]({url})" if title else url
+                    print(f"Line {line_num}: Processing Blog - \"{title or url}\"")
                     success = _process_blog(entry)
                     if success:
                         stats['processed_blog'] += 1
                     else:
-                        error_msg = f"Line {line_num}: Blog processing failed - {title}"
+                        error_msg = f"Line {line_num}: Blog processing failed - {title or url}"
                         stats['errors'].append(error_msg)
 
     except FileNotFoundError:
