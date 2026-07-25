@@ -286,7 +286,10 @@ def fetch_transcript(video_url, dest_path):
         # `env -u NODE_OPTIONS` stops a sandboxed node from breaking the n-challenge solver.
         cmd = (
             f"env -u NODE_OPTIONS yt-dlp {ytdlp_cookie_cli()} "
-            f"--write-sub --write-auto-sub --sub-lang en --convert-subs srt "
+            # ponytail: `en` alone misses videos captioned `en-US`/`en-GB`/`en-orig`;
+            # the regex catches every English variant. Translations *into* other
+            # languages are coded `xx-en-US`, so they don't match.
+            f"--write-sub --write-auto-sub --sub-lang 'en.*' --convert-subs srt "
             f"--skip-download --ignore-no-formats-error "
             f"-o {shlex.quote(os.path.join(tmpdir, 's.%(ext)s'))} {shlex.quote(video_url)}"
         )
