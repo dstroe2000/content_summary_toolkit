@@ -30,6 +30,7 @@ Example:
 
 import sys
 import argparse
+import re
 import shlex
 import time
 from pathlib import Path
@@ -76,7 +77,52 @@ def find_subtitle_files(folder_path, extensions=None):
     return sorted(subtitle_files)
 
 
-def process_subtitle_file(file_path, overwrite=False, verbose=False):
+# Trailing language tag on a subtitle name: `.en`, `.en-US`, `.pt-BR`.
+LANG_TAG_RE = re.compile(r"\.[A-Za-z]{2,3}(-[A-Za-z]{2,4})?$")
+
+
+def summary_path(file_path, flat_md=False):
+    """Output path for a subtitle file's generated note.
+
+    Default keeps the ``.summary.md`` suffix: the ``/ingest-vid`` slash command
+    ``cat``s and ``rm``s that exact filename, so flipping the default would
+    break a caller living outside this repo. ``flat_md`` opts into
+    ``video.en.srt -> video.en.md`` for notes that land in the vault directly.
+
+    Args:
+        file_path (Path): Source subtitle file.
+        flat_md (bool): Use ``{stem}.md`` instead of ``{name}.summary.md``.
+
+    Returns:
+        Path: Destination path for the generated note.
+    """
+    if flat_md:
+        return file_path.with_suffix('.md')
+    return file_path.with_suffix(file_path.suffix + '.summary.md')
+
+
+def source_video_path(file_path):
+    """Path of the video sitting beside a subtitle: ``video.en.srt -> video.mp4``.
+
+    Strips the subtitle extension, then a language tag if one is present.
+    ``Path.with_suffix('')`` cannot be used twice here -- on a dotted title like
+    ``Ep. 3 - Intro.srt`` the second call eats ``. 3 - Intro`` and yields
+    ``Ep.mp4``.
+
+    Args:
+        file_path (Path): Source subtitle file.
+
+    Returns:
+        Path: Sibling ``.mp4`` path (not checked for existence).
+    """
+    # ponytail: a title genuinely ending in `.AI` loses that tag; rename the
+    # file or pass an explicit path if that ever bites.
+    stem = LANG_TAG_RE.sub("", file_path.with_suffix("").name)
+    return file_path.with_name(stem + ".mp4")
+
+
+def process_subtitle_file(file_path, overwrite=False, verbose=False,
+                          flat_md=False, source_video=False):
     """
     Process a single subtitle file and generate summary.
 
@@ -92,6 +138,8 @@ def process_subtitle_file(file_path, overwrite=False, verbose=False):
         file_path (Path): Path to subtitle file
         overwrite (bool): Whether to overwrite existing summary files
         verbose (bool): Whether to print detailed processing info
+        flat_md (bool): Write ``{stem}.md`` instead of ``{name}.summary.md``
+        source_video (bool): Prepend a ``file://`` link to the sibling video
 
     Returns:
         dict: Processing result with keys:
@@ -130,7 +178,7 @@ def process_subtitle_file(file_path, overwrite=False, verbose=False):
     }
 
     # Determine output filename
-    output_filename = file_path.with_suffix(file_path.suffix + '.summary.md')
+    output_filename = summary_path(file_path, flat_md)
 
     # Check if summary already exists
     if output_filename.exists() and not overwrite:
@@ -203,8 +251,15 @@ def process_subtitle_file(file_path, overwrite=False, verbose=False):
     # Build TOC section only if we have headers
     toc_section = f"{toc_content}\n\n---\n\n" if toc_content else ""
 
+    # Source-video backlink. The vault organizer's tagger needs a [link](url)
+    # + blank + --- anchor to insert tags; it doubles as a jump-to-source link
+    # that survives the note moving into the vault.
+    header = ""
+    if source_video:
+        header = f"[▶ Source video]( <file://{source_video_path(file_path)}> )\n\n---\n\n"
+
     # Create aggregated content
-    content = f"""{toc_section}{filtered_summary}
+    content = header + f"""{toc_section}{filtered_summary}
 
 ---
 ---
@@ -281,6 +336,19 @@ Examples:
         help='Filter by specific subtitle file extensions (e.g., .srt .vtt)'
     )
 
+    parser.add_argument(
+        '--flat-md',
+        action='store_true',
+        help='Name output {stem}.md instead of {name}.summary.md '
+             '(off by default: /ingest-vid expects the .summary.md name)'
+    )
+
+    parser.add_argument(
+        '--source-video',
+        action='store_true',
+        help='Prepend a file:// link to the video sitting beside the subtitle'
+    )
+
     args = parser.parse_args()
 
     # Validate folder exists
@@ -314,7 +382,7 @@ Examples:
     if args.dry_run:
         print("\nFiles to be processed (dry-run mode):")
         for file_path in subtitle_files:
-            output_name = file_path.with_suffix(file_path.suffix + '.summary.md')
+            output_name = summary_path(file_path, args.flat_md)
             exists = output_name.exists()
             status = " (exists)" if exists else ""
             print(f"  {file_path}{status}")
@@ -338,7 +406,8 @@ Examples:
         if not args.verbose:
             print(f"[{i}/{len(subtitle_files)}] {file_path.name}...", end=' ')
 
-        result = process_subtitle_file(file_path, args.overwrite, args.verbose)
+        result = process_subtitle_file(file_path, args.overwrite, args.verbose,
+                                       args.flat_md, args.source_video)
 
         if result['success']:
             stats['success'] += 1
