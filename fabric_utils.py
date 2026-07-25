@@ -87,12 +87,20 @@ class FabricTimeout(Exception):
 
     Carries enough context for the batch runner to report *what* stalled:
     the pattern name, the limit it blew through, and how long it actually ran.
+
+    ``title`` and ``transcript_kb`` are enriched by the caller that knows them
+    (see ``youtube_summary_generator``) and default to placeholders here. They
+    are formatted into the batch error line, so leaving them unset would make
+    the reporter raise AttributeError while formatting its own error message --
+    turning one stalled video into a dead batch.
     """
 
-    def __init__(self, pattern_label, limit, elapsed):
+    def __init__(self, pattern_label, limit, elapsed, title="", transcript_kb=0.0):
         self.pattern_label = pattern_label
         self.limit = limit
         self.elapsed = elapsed
+        self.title = title
+        self.transcript_kb = transcript_kb
         super().__init__(
             f"fabric -p {pattern_label} exceeded {limit}s (ran {elapsed:.0f}s)")
 

@@ -55,6 +55,19 @@ def test_default_timeout_is_seven_minutes():
     assert FABRIC_TIMEOUT == 420, FABRIC_TIMEOUT
 
 
+def test_timeout_is_reportable_without_enrichment():
+    """The batch reporter formats these fields; unset ones killed the run."""
+    e = FabricTimeout("extract_wisdom", 420, 421.0)
+    assert e.transcript_kb == 0.0, e.transcript_kb
+    assert e.title == "", e.title
+    # Exactly the interpolation content_summary_toolkit does per timeout.
+    line = (f"TIMEOUT ({e.pattern_label}, {e.elapsed:.0f}s, "
+            f"{e.transcript_kb:.0f} KB) - {e.title}")
+    assert line == "TIMEOUT (extract_wisdom, 421s, 0 KB) - ", line
+    enriched = FabricTimeout("summarize", 420, 500.0, "Some Video", 229.4)
+    assert (enriched.title, round(enriched.transcript_kb)) == ("Some Video", 229)
+
+
 def test_live():
     ok, reason = fetch_transcript(
         "https://www.youtube.com/watch?v=Oz4p0ESLJV0", "/tmp/_transcript_check.txt")
@@ -69,6 +82,7 @@ if __name__ == "__main__":
     print("srt parsing OK")
     test_timeout_raises_without_retrying()
     test_default_timeout_is_seven_minutes()
+    test_timeout_is_reportable_without_enrichment()
     print("timeout handling OK")
     if "--live" in sys.argv:
         test_live()
