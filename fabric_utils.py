@@ -16,6 +16,7 @@ so individual tools can layer their own quality checks on top of the
 default "must contain a level-1 header" rule.
 """
 
+import contextlib
 import html
 import os
 import re
@@ -158,6 +159,133 @@ MAX_FABRIC_ATTEMPTS = 3
 # llama.cpp server is slow enough that "slow" and "hung" look identical.
 # Override with env var FABRIC_TIMEOUT.
 FABRIC_TIMEOUT = int(os.environ.get("FABRIC_TIMEOUT", 420))
+
+# Generation time scales with input length, so a flat limit that fits a 100 KB
+# transcript kills a 375 KB one mid-answer. Measured on a local backend:
+# ~1 s/KB per pattern, extract_wisdom being the slowest. 2 s/KB leaves headroom
+# without letting a genuinely hung backend hold the batch forever -- hence the
+# ceiling. FABRIC_TIMEOUT stays the floor for small inputs.
+FABRIC_SECONDS_PER_KB = float(os.environ.get("FABRIC_SECONDS_PER_KB", 2.0))
+FABRIC_TIMEOUT_MAX = int(os.environ.get("FABRIC_TIMEOUT_MAX", 1800))
+
+
+def timeout_for(path):
+    """Return a size-scaled fabric timeout for the file at ``path``.
+
+    Args:
+        path (str or Path): Input file piped into fabric.
+
+    Returns:
+        int: Seconds, clamped to ``[FABRIC_TIMEOUT, FABRIC_TIMEOUT_MAX]``.
+        Falls back to ``FABRIC_TIMEOUT`` if the file cannot be stat'd.
+    """
+    try:
+        kb = os.path.getsize(path) / 1024
+    except OSError:
+        return FABRIC_TIMEOUT
+    return int(min(FABRIC_TIMEOUT_MAX,
+                   max(FABRIC_TIMEOUT, kb * FABRIC_SECONDS_PER_KB)))
+
+
+# Context window of the configured backend, in tokens (LM Studio's
+# loaded_context_length / Ollama's num_ctx). Override with MODEL_CONTEXT_TOKENS
+# when pointing fabric at a smaller-window server -- overshooting it does not
+# error, it silently truncates the transcript and yields a summary of whatever
+# survived, which reads as a real note.
+MODEL_CONTEXT_TOKENS = int(os.environ.get("MODEL_CONTEXT_TOKENS", 262144))
+
+# Share of the window the input may occupy. The rest is the model's room to
+# answer: a prompt that fills the window leaves nowhere to generate.
+CONTEXT_INPUT_FRACTION = float(os.environ.get("CONTEXT_INPUT_FRACTION", 0.8))
+MAX_INPUT_TOKENS = int(MODEL_CONTEXT_TOKENS * CONTEXT_INPUT_FRACTION)
+
+# Measured on gemma-4-26b-a4b against a de-timestamped transcript:
+# 100 KB -> 25,854 tokens. Timestamped text runs denser (~2.9) because
+# "[00:00:00] " costs ~8 tokens per line, so always measure post-strip.
+CHARS_PER_TOKEN = 3.9
+
+# Timing noise carried by transcripts: the "[hh:mm:ss] " prefix written by
+# fetch_transcript, and raw SRT cue blocks (index line + "00:00:01,000 -->"
+# line). Worth ~35% of a transcript's tokens -- 46k of 132k on a 4,588-line
+# file -- and worth nothing to summarize/extract_wisdom. The cached file keeps
+# them, because the note enrichment pass cites timestamps; only the pipe into
+# fabric is stripped.
+STRIP_RES = (
+    re.compile(r"^\[\d\d:\d\d:\d\d\][ \t]*", re.M),   # "[00:12:34] spoken text"
+    re.compile(r"^.*-->.*$\n?", re.M),                # SRT cue timing line
+    # ponytail: also eats a transcript line that is nothing but digits. Cheap
+    # trade for dropping every SRT index line.
+    re.compile(r"^\d+$\n?", re.M),
+)
+
+
+def read_stripped(path):
+    """Return the file's text with timing markers and SRT cue scaffolding gone.
+
+    Args:
+        path (str or Path): Input file.
+
+    Returns:
+        str: Stripped text -- exactly what ``stripped_input`` pipes to fabric,
+        so token estimates taken from it match what the backend receives.
+    """
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    for pattern in STRIP_RES:
+        text = pattern.sub("", text)
+    return text
+
+
+@contextlib.contextmanager
+def stripped_input(path):
+    """Yield a ``cat <tmpfile>`` command feeding ``path`` minus timing noise.
+
+    Drop-in replacement for ``cat <file>`` at the head of a fabric pipe. The
+    temp file lives for the duration of the ``with`` block, so several patterns
+    can share one strip pass.
+
+    Args:
+        path (str or Path): Input file.
+
+    Yields:
+        str: Shell command emitting the stripped text, already quoted.
+    """
+    fd, tmp = tempfile.mkstemp(prefix="fabric_in_", suffix=".txt")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(read_stripped(path))
+        yield f"cat {shlex.quote(tmp)}"
+    finally:
+        os.unlink(tmp)
+
+
+def estimate_tokens(path):
+    """Estimate the token count fabric will send for ``path``, post-strip.
+
+    Args:
+        path (str or Path): Input file.
+
+    Returns:
+        int: Estimated tokens, or 0 if the file cannot be read.
+    """
+    try:
+        return int(len(read_stripped(path)) / CHARS_PER_TOKEN)
+    except OSError:
+        return 0
+
+
+def context_check(path):
+    """Check whether ``path`` fits the backend's usable context window.
+
+    Args:
+        path (str or Path): Input file destined for a fabric pipe.
+
+    Returns:
+        tuple[bool, int]: ``(fits, estimated_tokens)``. ``fits`` is False when
+        the input would be silently truncated by the backend.
+    """
+    tokens = estimate_tokens(path)
+    return tokens <= MAX_INPUT_TOKENS, tokens
 
 
 class FabricTimeout(Exception):

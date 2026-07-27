@@ -38,7 +38,11 @@ from pathlib import Path
 from fabric_utils import (
     extract_first_level1_header,
     generate_toc,
+    stripped_input,
+    context_check,
+    MAX_INPUT_TOKENS,
     run_fabric_with_retry,
+    timeout_for,
 )
 
 
@@ -210,40 +214,52 @@ def process_subtitle_file(file_path, overwrite=False, verbose=False,
 
     # Run fabric patterns. shlex.quote prevents shell expansion in paths
     # containing $$, $VAR, backticks, etc. (subprocess uses shell=True).
-    file_path_q = shlex.quote(str(file_path))
+    fabric_timeout = timeout_for(file_path)
 
-    # 1. Get summary using fabric's summarize pattern (retry if no H1 header)
-    if verbose:
-        print("  Getting summary...")
-    summary_cmd = f'cat {file_path_q} | fabric -p summarize'
-    success, filtered_summary, header_summarize = run_fabric_with_retry(
-        summary_cmd, "summarize", verbose)
-    if not success:
-        result['reason'] = 'Summarize pattern failed'
+    # Over-window input is truncated by the backend without a word, so the note
+    # would silently describe only the tail of the file.
+    fits, est_tokens = context_check(file_path)
+    if not fits:
+        result['reason'] = (f'Too large: ~{est_tokens:,} tokens > '
+                            f'{MAX_INPUT_TOKENS:,} budget')
         return result
 
-    # 2. Get YouTube summary using fabric's youtube_summary pattern (retry if no H1 header)
-    if verbose:
-        print("  Getting YouTube summary...")
-    yt_summary_cmd = f'cat {file_path_q} | fabric -p youtube_summary'
-    success, filtered_youtube_summary, header_youtube = run_fabric_with_retry(
-        yt_summary_cmd, "youtube_summary", verbose)
-    if not success:
-        result['reason'] = 'YouTube summary pattern failed'
-        return result
+    # Timestamps cost ~35% of a transcript's tokens and mean nothing to these
+    # patterns; the file on disk keeps them.
+    with stripped_input(file_path) as file_in:
 
-    # 3. Extract wisdom using fabric's extract_wisdom pattern (retry if no H1 header)
-    if verbose:
-        print("  Extracting wisdom...")
-    wisdom_cmd = f'cat {file_path_q} | fabric -p extract_wisdom'
-    success, filtered_extract_wisdom, header_wisdom = run_fabric_with_retry(
-        wisdom_cmd, "extract_wisdom", verbose)
-    if not success:
-        result['reason'] = 'Extract wisdom pattern failed'
-        return result
+        # 1. Get summary using fabric's summarize pattern (retry if no H1 header)
+        if verbose:
+            print("  Getting summary...")
+        summary_cmd = f'{file_in} | fabric -p summarize'
+        success, filtered_summary, header_summarize = run_fabric_with_retry(
+            summary_cmd, "summarize", verbose, timeout=fabric_timeout)
+        if not success:
+            result['reason'] = 'Summarize pattern failed'
+            return result
 
-    if verbose:
-        print("  Generating table of contents...")
+        # 2. Get YouTube summary using fabric's youtube_summary pattern (retry if no H1 header)
+        if verbose:
+            print("  Getting YouTube summary...")
+        yt_summary_cmd = f'{file_in} | fabric -p youtube_summary'
+        success, filtered_youtube_summary, header_youtube = run_fabric_with_retry(
+            yt_summary_cmd, "youtube_summary", verbose, timeout=fabric_timeout)
+        if not success:
+            result['reason'] = 'YouTube summary pattern failed'
+            return result
+
+        # 3. Extract wisdom using fabric's extract_wisdom pattern (retry if no H1 header)
+        if verbose:
+            print("  Extracting wisdom...")
+        wisdom_cmd = f'{file_in} | fabric -p extract_wisdom'
+        success, filtered_extract_wisdom, header_wisdom = run_fabric_with_retry(
+            wisdom_cmd, "extract_wisdom", verbose, timeout=fabric_timeout)
+        if not success:
+            result['reason'] = 'Extract wisdom pattern failed'
+            return result
+
+        if verbose:
+            print("  Generating table of contents...")
 
     # Generate TOC
     toc_content = generate_toc([header_summarize, header_youtube, header_wisdom])

@@ -26,7 +26,11 @@ import sys
 import re
 import os
 import time
-from youtube_summary_generator import process_youtube_entry, SUBTITLE_ERROR
+from youtube_summary_generator import (
+    process_youtube_entry,
+    OVERSIZED_ERROR,
+    SUBTITLE_ERROR,
+)
 from fabric_utils import FabricTimeout
 from blog_summary_generator import process_blog_entry
 
@@ -111,9 +115,10 @@ def _process_youtube(entry):
 
     Returns:
         str | FabricTimeout: 'ok' on success, SUBTITLE_ERROR if the transcript
-        couldn't be fetched, the FabricTimeout instance if a pattern stalled
-        (it carries pattern/elapsed/transcript size for reporting), 'error'
-        for any other failure.
+        couldn't be fetched, OVERSIZED_ERROR if it does not fit the model's
+        context window, the FabricTimeout instance if a pattern stalled (it
+        carries pattern/elapsed/transcript size for reporting), 'error' for any
+        other failure.
 
     Side Effects:
         - Calls process_youtube_entry() which prints output and creates files
@@ -121,8 +126,8 @@ def _process_youtube(entry):
     """
     try:
         result = process_youtube_entry(entry)
-        if result == SUBTITLE_ERROR:
-            return SUBTITLE_ERROR
+        if result in (SUBTITLE_ERROR, OVERSIZED_ERROR):
+            return result
         if result == 'error':   # e.g. bare URL whose title could not be fetched
             return 'error'
         return 'ok'
@@ -171,6 +176,7 @@ def _print_summary_report(stats, elapsed_time):
             - skipped (int): Skipped lines (empty, headers, commentary)
             - invalid (int): Invalid format lines
             - subtitle_errors (int): Entries aborted because no transcript could be fetched
+            - oversized_errors (int): Entries whose transcript exceeds the model context window
             - timeout_errors (int): Entries aborted because a fabric pattern exceeded FABRIC_TIMEOUT
             - errors (list): List of error messages
         elapsed_time (float): Total time taken for batch processing in seconds
@@ -187,6 +193,7 @@ def _print_summary_report(stats, elapsed_time):
     print(f"Skipped:              {stats['skipped']}")
     print(f"Invalid format:       {stats['invalid']}")
     print(f"Subtitle errors:      {stats.get('subtitle_errors', 0)}")
+    print(f"Oversized inputs:     {stats.get('oversized_errors', 0)}")
     print(f"Timeout errors:       {stats.get('timeout_errors', 0)}")
     print(f"Errors:               {len(stats['errors'])}")
 
@@ -268,6 +275,7 @@ def process_batch_file(batch_file_path):
         'skipped': 0,
         'invalid': 0,
         'subtitle_errors': 0,
+        'oversized_errors': 0,
         'timeout_errors': 0,
         'errors': []
     }
@@ -301,6 +309,11 @@ def process_batch_file(batch_file_path):
                         error_msg = f"Line {line_num}: SUBTITLE ERROR - {title or url}"
                         stats['errors'].append(error_msg)
                         print(f"  Subtitle errors so far: {stats['subtitle_errors']}")
+                    elif result == OVERSIZED_ERROR:
+                        stats['oversized_errors'] += 1
+                        error_msg = f"Line {line_num}: TOO LARGE (context window) - {title or url}"
+                        stats['errors'].append(error_msg)
+                        print(f"  Oversized inputs so far: {stats['oversized_errors']}")
                     elif isinstance(result, FabricTimeout):
                         stats['timeout_errors'] += 1
                         error_msg = (

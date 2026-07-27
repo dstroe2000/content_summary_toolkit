@@ -41,7 +41,10 @@ from fabric_utils import (
     generate_toc,
     page_title,
     run_command,
+    context_check,
+    MAX_INPUT_TOKENS,
     run_fabric_with_retry,
+    timeout_for,
 )
 
 # A line that is nothing but a URL -- the title has to come from the page itself.
@@ -135,12 +138,20 @@ def process_blog_entry(entry):
     reference_cmd = f"fabric -u {reference_q}  > {blog_q}"
     run_command(reference_cmd)
     print(f"... generated '{blog_file}' blog file \n")
+    fabric_timeout = timeout_for(blog_file)
+
+    # A long-form article can outrun the window too; truncation there is silent.
+    fits, est_tokens = context_check(blog_file)
+    if not fits:
+        print(f"\n!!! TOO LARGE: {title}\n    ~{est_tokens:,} tokens exceeds the "
+              f"{MAX_INPUT_TOKENS:,}-token input budget\n")
+        return
 
     # Get summary using fabric's summarize pattern (retry + pseudo-header fallback)
     print("Getting Blog summary ...")
     summary_cmd = f"cat {blog_q} | fabric -p summarize"
     success, filtered_summary, header_summarize = run_fabric_with_retry(
-        summary_cmd, "summarize")
+        summary_cmd, "summarize", timeout=fabric_timeout)
     if not success:
         print("Error: fabric summarize failed; aborting")
         return
@@ -150,7 +161,7 @@ def process_blog_entry(entry):
     print("Extracting Blog Wisdom ...")
     wisdom_cmd = f"cat {blog_q} | fabric -p extract_wisdom"
     success, filtered_extract_wisdom, header_wisdom = run_fabric_with_retry(
-        wisdom_cmd, "extract_wisdom")
+        wisdom_cmd, "extract_wisdom", timeout=fabric_timeout)
     if not success:
         print("Error: fabric extract_wisdom failed; aborting")
         return

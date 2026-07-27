@@ -23,7 +23,11 @@ from pathlib import Path
 
 from fabric_utils import (
     generate_toc,
+    stripped_input,
+    context_check,
+    MAX_INPUT_TOKENS,
     run_fabric_with_retry,
+    timeout_for,
     youtube_meta,
 )
 
@@ -82,27 +86,35 @@ def process_srt(srt_path, title, url, output_folder, overwrite=False, verbose=Fa
     print(f"  metadata ...")
     author, channel_url, description, _title = youtube_meta(url)
 
-    srt_q = shlex.quote(str(srt_path))
-    print(f"  fabric summarize ...")
-    ok, sum_text, h1 = run_fabric_with_retry(
-        f'cat {srt_q} | fabric -p summarize', "summarize", verbose
-    )
-    if not ok:
-        return "failed:summarize"
+    fabric_timeout = timeout_for(srt_path)
+    fits, est_tokens = context_check(srt_path)
+    if not fits:
+        print(f"  too large: ~{est_tokens:,} tokens > {MAX_INPUT_TOKENS:,} budget")
+        return "failed:oversized"
+    with stripped_input(srt_path) as srt_in:
+        print(f"  fabric summarize ...")
+        ok, sum_text, h1 = run_fabric_with_retry(
+            f'{srt_in} | fabric -p summarize', "summarize", verbose,
+            timeout=fabric_timeout
+        )
+        if not ok:
+            return "failed:summarize"
 
-    print(f"  fabric youtube_summary ...")
-    ok, yt_text, h2 = run_fabric_with_retry(
-        f'cat {srt_q} | fabric -p youtube_summary', "youtube_summary", verbose
-    )
-    if not ok:
-        return "failed:youtube_summary"
+        print(f"  fabric youtube_summary ...")
+        ok, yt_text, h2 = run_fabric_with_retry(
+            f'{srt_in} | fabric -p youtube_summary', "youtube_summary", verbose,
+            timeout=fabric_timeout
+        )
+        if not ok:
+            return "failed:youtube_summary"
 
-    print(f"  fabric extract_wisdom ...")
-    ok, wis_text, h3 = run_fabric_with_retry(
-        f'cat {srt_q} | fabric -p extract_wisdom', "extract_wisdom", verbose
-    )
-    if not ok:
-        return "failed:extract_wisdom"
+        print(f"  fabric extract_wisdom ...")
+        ok, wis_text, h3 = run_fabric_with_retry(
+            f'{srt_in} | fabric -p extract_wisdom', "extract_wisdom", verbose,
+            timeout=fabric_timeout
+        )
+        if not ok:
+            return "failed:extract_wisdom"
 
     toc = generate_toc([h1, h2, h3])
     toc_section = f"\n{toc}\n\n---\n" if toc else ""

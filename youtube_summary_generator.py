@@ -48,7 +48,12 @@ from fabric_utils import (
     clean_title,
     fetch_transcript,
     generate_toc,
+    context_check,
+    stripped_input,
+    MAX_INPUT_TOKENS,
+    MODEL_CONTEXT_TOKENS,
     run_fabric_with_retry,
+    timeout_for,
     youtube_meta,
 )
 
@@ -58,6 +63,12 @@ BARE_URL_RE = re.compile(r'^https?://\S+$')
 # Status returned by process_youtube_entry() when the transcript could not be
 # fetched, so the batch runner can count subtitle failures separately.
 SUBTITLE_ERROR = "subtitle_error"
+
+# Status returned when the transcript is too long for the backend's context
+# window. Distinct from a timeout: nothing stalled, the input simply cannot be
+# sent whole, and sending it anyway buys a summary of a silently cropped
+# transcript.
+OVERSIZED_ERROR = "oversized_error"
 
 
 def process_youtube_entry(entry):
@@ -70,9 +81,10 @@ def process_youtube_entry(entry):
     3. Extract channel name, channel URL and description in one yt-dlp call
     4. Ensure subtitle/ and generated/ folders exist (create if needed)
     5. Get transcript via yt-dlp into 'subtitle/{title}.txt' (reused if already present)
-    7. Get summary via: cat 'subtitle/{title}.txt' | fabric -p summarize
-    8. Get YouTube summary via: cat 'subtitle/{title}.txt' | fabric -p youtube_summary
-    9. Get extract wisdom via: cat 'subtitle/{title}.txt' | fabric -p extract_wisdom
+    6. Check the transcript fits the backend context window (timestamps stripped)
+    7. Get summary via: <de-timestamped subtitle> | fabric -p summarize
+    8. Get YouTube summary via: <de-timestamped subtitle> | fabric -p youtube_summary
+    9. Get extract wisdom via: <de-timestamped subtitle> | fabric -p extract_wisdom
     10. Filter <think></think> sections from all three summaries
     11. Generate Table of Contents from section headers
     12. Aggregate into structured markdown file
@@ -173,7 +185,6 @@ def process_youtube_entry(entry):
     # Get transcript via yt-dlp (cookie-authenticated). shlex.quote prevents shell
     # expansion of $$, $VAR, backticks etc. in title-derived filenames or URLs.
     subtitle_file = f"output/subtitle/{title}.txt"
-    subtitle_q = shlex.quote(subtitle_file)
     ok, reason = fetch_transcript(reference, subtitle_file)
 
     # Abort before the fabric patterns: summarizing an empty transcript yields a
@@ -188,42 +199,55 @@ def process_youtube_entry(entry):
     # Transcript size is the lever behind most fabric timeouts, so carry it
     # into any timeout raised below.
     transcript_kb = os.path.getsize(subtitle_file) / 1024
+    fabric_timeout = timeout_for(subtitle_file)
 
-    try:
-        # Get summary using fabric's summarize pattern (retry + pseudo-header fallback)
-        print("Getting summary ...")
-        summary_cmd = f"cat {subtitle_q} | fabric -p summarize"
-        success, filtered_summary, header_summarize = run_fabric_with_retry(
-            summary_cmd, "summarize")
-        if not success:
-            print("Error: fabric summarize failed; aborting")
-            return
-        print(f"""... generated summary section \n""")
+    # Timestamps are dropped from every fabric pipe below (~35% of the tokens),
+    # so the fit check must measure what actually gets sent.
+    fits, est_tokens = context_check(subtitle_file)
+    if not fits:
+        print(f"\n!!! TOO LARGE: {title}\n    ~{est_tokens:,} tokens exceeds the "
+              f"{MAX_INPUT_TOKENS:,}-token input budget "
+              f"({MODEL_CONTEXT_TOKENS:,} context window)\n")
+        return OVERSIZED_ERROR
+    print(f"Transcript: {transcript_kb:.0f} KB, ~{est_tokens:,} tokens "
+          f"(timeouts at {fabric_timeout}s)")
 
-        # Get YouTube summary using fabric's youtube_summary pattern
-        print("Getting YouTube summary...")
-        yt_summary_cmd = f"cat {subtitle_q} | fabric -p youtube_summary"
-        success, filtered_youtube_summary, header_youtube = run_fabric_with_retry(
-            yt_summary_cmd, "youtube_summary")
-        if not success:
-            print("Error: fabric youtube_summary failed; aborting")
-            return
-        print(f"""... generated youtube summary section""")
+    with stripped_input(subtitle_file) as subtitle_in:
+        try:
+            # Get summary using fabric's summarize pattern (retry + pseudo-header fallback)
+            print("Getting summary ...")
+            summary_cmd = f"{subtitle_in} | fabric -p summarize"
+            success, filtered_summary, header_summarize = run_fabric_with_retry(
+                summary_cmd, "summarize", timeout=fabric_timeout)
+            if not success:
+                print("Error: fabric summarize failed; aborting")
+                return
+            print(f"""... generated summary section \n""")
 
-        # Extract wisdom using fabric's extract_wisdom pattern
-        print("Extracting YouTube Wisdom ...")
-        wisdom_cmd = f"cat {subtitle_q} | fabric -p extract_wisdom"
-        success, filtered_extract_wisdom, header_wisdom = run_fabric_with_retry(
-            wisdom_cmd, "extract_wisdom")
-        if not success:
-            print("Error: fabric extract_wisdom failed; aborting")
-            return
-        print(f"""... generated extract_wisdom section""")
-    except FabricTimeout as e:
-        e.title = title
-        e.transcript_kb = transcript_kb
-        print(f"\n!!! TIMEOUT: {title}\n    {e} on a {transcript_kb:.0f} KB transcript\n")
-        raise
+            # Get YouTube summary using fabric's youtube_summary pattern
+            print("Getting YouTube summary...")
+            yt_summary_cmd = f"{subtitle_in} | fabric -p youtube_summary"
+            success, filtered_youtube_summary, header_youtube = run_fabric_with_retry(
+                yt_summary_cmd, "youtube_summary", timeout=fabric_timeout)
+            if not success:
+                print("Error: fabric youtube_summary failed; aborting")
+                return
+            print(f"""... generated youtube summary section""")
+
+            # Extract wisdom using fabric's extract_wisdom pattern
+            print("Extracting YouTube Wisdom ...")
+            wisdom_cmd = f"{subtitle_in} | fabric -p extract_wisdom"
+            success, filtered_extract_wisdom, header_wisdom = run_fabric_with_retry(
+                wisdom_cmd, "extract_wisdom", timeout=fabric_timeout)
+            if not success:
+                print("Error: fabric extract_wisdom failed; aborting")
+                return
+            print(f"""... generated extract_wisdom section""")
+        except FabricTimeout as e:
+            e.title = title
+            e.transcript_kb = transcript_kb
+            print(f"\n!!! TIMEOUT: {title}\n    {e} on a {transcript_kb:.0f} KB transcript\n")
+            raise
 
     # Generate TOC from headers returned by retry helper
     print("Generating table of contents...")
