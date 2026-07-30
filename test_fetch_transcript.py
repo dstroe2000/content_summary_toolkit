@@ -17,6 +17,7 @@ from fabric_utils import (
     MAX_INPUT_TOKENS,
     context_check,
     read_stripped,
+    run_command,
     run_fabric_with_retry,
     stripped_input,
     timeout_for,
@@ -59,6 +60,24 @@ def test_timeout_raises_without_retrying():
         assert elapsed < 3, f"retried instead of failing fast: {elapsed:.1f}s"
     else:
         raise AssertionError("expected FabricTimeout")
+
+
+def test_timeout_kills_the_whole_pipeline():
+    """No pipe stage may outlive the timeout -- an orphan holds the backend."""
+    import os
+    import subprocess
+    marker = "/tmp/_orphan_check.pid"
+    if os.path.exists(marker):
+        os.remove(marker)
+    # Second stage of the pipe: the one subprocess.run(timeout=) used to orphan.
+    ok, _ = run_command(f"echo x | (echo $$ > {marker}; sleep 30)", timeout=1)
+    assert not ok
+    with open(marker) as f:
+        pid = int(f.read().strip())
+    os.remove(marker)
+    alive = subprocess.run(["ps", "-p", str(pid)],
+                           capture_output=True).returncode == 0
+    assert not alive, f"pid {pid} survived the timeout"
 
 
 def test_default_timeout_is_seven_minutes():
@@ -147,6 +166,7 @@ if __name__ == "__main__":
     test_srt_to_timestamped()
     print("srt parsing OK")
     test_timeout_raises_without_retrying()
+    test_timeout_kills_the_whole_pipeline()
     test_default_timeout_is_seven_minutes()
     test_timeout_scales_with_input_size()
     test_strip_removes_timing_noise_and_nothing_else()

@@ -21,6 +21,7 @@ import html
 import os
 import re
 import shutil
+import signal
 import subprocess
 import shlex
 import tempfile
@@ -420,14 +421,24 @@ def run_command(command, verbose=False, timeout=None):
     try:
         if verbose:
             print(f"  Running: {command}")
-        result = subprocess.run(
-            command, shell=True, capture_output=True, text=True, timeout=timeout
+        # ponytail: Popen + killpg rather than subprocess.run(timeout=...).
+        # run() kills only the shell, so `cat x | fabric` leaves `fabric`
+        # reparented to init, still holding its HTTP connection to the model
+        # backend until fabric's own (much longer) internal timeout fires.
+        # Own session => one killpg reaps the whole pipeline.
+        proc = subprocess.Popen(
+            command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, start_new_session=True,
         )
-        if result.returncode == 0:
-            return True, result.stdout.strip()
-        return False, (result.stderr or "").strip()
-    except subprocess.TimeoutExpired:
-        return False, "Command timed out"
+        try:
+            out, err = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            proc.communicate()
+            return False, "Command timed out"
+        if proc.returncode == 0:
+            return True, out.strip()
+        return False, (err or "").strip()
     except Exception as e:
         return False, str(e)
 
