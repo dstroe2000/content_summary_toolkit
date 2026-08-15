@@ -54,6 +54,7 @@ from fabric_utils import (
     MODEL_CONTEXT_TOKENS,
     run_fabric_with_retry,
     timeout_for,
+    video_id,
     youtube_meta,
 )
 
@@ -80,7 +81,7 @@ def process_youtube_entry(entry):
     2. Validate that reference is a YouTube URL
     3. Extract channel name, channel URL and description in one yt-dlp call
     4. Ensure subtitle/ and generated/ folders exist (create if needed)
-    5. Get transcript via yt-dlp into 'subtitle/{title}.txt' (reused if already present)
+    5. Get transcript via yt-dlp into 'subtitle/{videoid}.txt' (reused if already present)
     6. Check the transcript fits the backend context window (timestamps stripped)
     7. Get summary via: <de-timestamped subtitle> | fabric -p summarize
     8. Get YouTube summary via: <de-timestamped subtitle> | fabric -p youtube_summary
@@ -184,7 +185,14 @@ def process_youtube_entry(entry):
 
     # Get transcript via yt-dlp (cookie-authenticated). shlex.quote prevents shell
     # expansion of $$, $VAR, backticks etc. in title-derived filenames or URLs.
-    subtitle_file = f"output/subtitle/{title}.txt"
+    #
+    # Keyed by video id, not title: fetch_transcript reuses any non-empty dest_path,
+    # so a title-keyed cache made a second video with the same title reuse the first
+    # video's transcript -- and fabric then summarized the wrong video into the new
+    # note. Titles collide (22 pairs in this vault); ids do not. Videos cached under
+    # the old title-keyed name re-download once and migrate themselves.
+    vid = video_id(reference)
+    subtitle_file = f"output/subtitle/{vid}.txt" if vid else f"output/subtitle/{title}.txt"
     ok, reason = fetch_transcript(reference, subtitle_file)
 
     # Abort before the fabric patterns: summarizing an empty transcript yields a

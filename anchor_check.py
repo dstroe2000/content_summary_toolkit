@@ -13,7 +13,9 @@ Usage:
     anchor_check.py <note.md> [<note.md> ...]
     anchor_check.py --selftest
 
-Subtitles are looked up by note basename in SUBTITLE_DIR.
+Subtitles are found by the note's YouTube video id when a <videoid>.txt exists in
+SUBTITLE_DIR, else by note basename. Title keying is ambiguous — two videos can
+share a title, and the note then validates against the wrong transcript.
 Exit code 1 if any note has findings.
 """
 import re
@@ -125,13 +127,32 @@ def note_anchors(text):
 
 
 
+VIDEO_ID = re.compile(r"youtube\.com/watch\?v=([\w-]+)|youtu\.be/([\w-]+)")
+
+
+def subtitle_for(note, text):
+    """Locate a note's subtitle, preferring a video-ID-keyed file.
+
+    Keying subtitles by note title is ambiguous: two different videos can share a
+    title (this vault has two distinct "5 Open Source Tools That Feel Illegal To Be
+    Free" notes, from different channels), and then one note silently validates
+    against the other's transcript. A `<videoid>.txt` beside it wins when present,
+    so a collision is fixed by adding a file rather than overwriting one.
+    """
+    m = VIDEO_ID.search(text)
+    if m:
+        by_id = SUBTITLE_DIR / ((m.group(1) or m.group(2)) + ".txt")
+        if by_id.exists():
+            return by_id
+    return SUBTITLE_DIR / (note.stem + ".txt")
+
+
 def check(note_path):
     note = pathlib.Path(note_path)
-    sub = SUBTITLE_DIR / (note.stem + ".txt")
+    text = pathlib.Path(note_path).read_text(errors="replace")
+    sub = subtitle_for(note, text)
     if not sub.exists():
         return [f"SKIP  no subtitle at {sub}"]
-
-    text = note.read_text(errors="replace")
     sub_lines, duration = load_subtitle(sub)
     if not sub_lines:
         return [f"SKIP  subtitle has no [HH:MM:SS] anchors: {sub}"]
@@ -187,6 +208,9 @@ def selftest():
     md = "## [00:01:00] Real\n```mermaid\n## [00:09:09] fenced, ignored\n```\n"
     assert note_anchors(md) == [(1, 60, "Real", False)]
     assert note_anchors("### [04:58] Two-field\n") == [(1, 298, "Two-field", False)]
+
+    # a video-ID-keyed subtitle wins over the ambiguous title-keyed one
+    assert subtitle_for(pathlib.Path("/x/Some Note.md"), "no link here").name == "Some Note.txt"
 
     # a second summary block restarting at 00:00 is not OUT-OF-ORDER
     two = "## [00:10:00] A\n# Second Summary\n## [00:00:30] B\n"

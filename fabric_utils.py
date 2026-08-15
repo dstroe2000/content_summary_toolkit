@@ -486,6 +486,22 @@ def youtube_meta(video_url):
         return "Unknown", "", "", ""
 
 
+_VIDEO_ID_RE = re.compile(r"(?:youtube\.com/watch\?(?:[^ ]*&)?v=|youtu\.be/)([\w-]{11})")
+
+
+def video_id(video_url):
+    """Extract the 11-char YouTube video id, or ``None`` if the URL has none.
+
+    Transcripts are cached by this rather than by title. Two different videos can
+    share a title -- this vault has 22 such pairs -- and a title-keyed cache made
+    the second ingest silently reuse the first video's transcript, so fabric wrote
+    a note whose content belonged to a different video entirely. The id is the only
+    stable identity YouTube gives us.
+    """
+    m = _VIDEO_ID_RE.search(video_url or "")
+    return m.group(1) if m else None
+
+
 def fetch_transcript(video_url, dest_path):
     """Download a YouTube transcript to ``dest_path`` as ``[HH:MM:SS] text`` lines.
 
