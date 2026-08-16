@@ -12,6 +12,7 @@ from fabric_utils import (
     FABRIC_TIMEOUT,
     FABRIC_TIMEOUT_MAX,
     FabricTimeout,
+    _overlap_words,
     _srt_to_timestamped,
     fetch_transcript,
     MAX_INPUT_TOKENS,
@@ -42,10 +43,40 @@ def test_srt_to_timestamped():
     lines = _srt_to_timestamped(SRT)
     assert lines == [
         "[00:00:00] Well guys, semiconductor stocks",
-        "[00:00:02] Well guys, semiconductor stocks completely crashed this week",
+        "[00:00:02] completely crashed this week",
         "[00:01:05] and investors are wondering",
     ], lines
     assert _srt_to_timestamped("") == []
+
+
+ROLLING_SRT = """1
+00:00:02,000 --> 00:00:04,000
+If you're coding with Cloud or CodeX
+
+2
+00:00:04,000 --> 00:00:06,000
+If you're coding with Cloud or CodeX today, there's a new paradigm
+
+3
+00:00:06,000 --> 00:00:08,000
+today, there's a new paradigm you're going to love
+"""
+
+
+def test_rolling_captions_are_merged_not_duplicated():
+    """A cue repeating the previous cue's TAIL, not the whole previous cue.
+
+    Trimming only exact duplicates leaves such a transcript at double length,
+    and lets "paradigm" read as two separate mentions to a keyword search.
+    """
+    lines = _srt_to_timestamped(ROLLING_SRT)
+    assert lines == [
+        "[00:00:02] If you're coding with Cloud or CodeX",
+        "[00:00:04] today, there's a new paradigm",
+        "[00:00:06] you're going to love",
+    ], lines
+    # word-level: a shared trailing "a" must not eat the next cue's "and"
+    assert _overlap_words("this is a", "and then") == 0
 
 
 def test_timeout_raises_without_retrying():
@@ -164,6 +195,7 @@ def test_live():
 
 if __name__ == "__main__":
     test_srt_to_timestamped()
+    test_rolling_captions_are_merged_not_duplicated()
     print("srt parsing OK")
     test_timeout_raises_without_retrying()
     test_timeout_kills_the_whole_pipeline()

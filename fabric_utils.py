@@ -564,6 +564,11 @@ def _srt_to_timestamped(srt_text):
 
     YouTube auto-subs repeat the previous cue's text at the top of the next cue;
     consecutive duplicates are collapsed so the transcript reads once through.
+
+    Some videos roll the caption a line at a time, so a cue is the previous
+    cue's tail plus a few new words rather than an exact repeat. Dropping only
+    whole duplicates leaves those transcripts at double length, which doubles
+    the token bill and makes one utterance's keywords score twice.
     """
     out = []
     for block in re.split(r"\n\s*\n", srt_text.strip()):
@@ -573,10 +578,27 @@ def _srt_to_timestamped(srt_text):
             continue
         text = " ".join(rows[rows.index(stamp) + 1:]).strip()
         text = re.sub(r"<[^>]+>", "", text).strip()
-        if not text or (out and out[-1].endswith(text)):
+        prev = out[-1].split("] ", 1)[-1] if out else ""
+        text = " ".join(text.split()[_overlap_words(prev, text):])
+        if not text:
             continue
         out.append(f"[{stamp.split('-->')[0].strip().split(',')[0]}] {text}")
     return out
+
+
+def _overlap_words(prev, text):
+    """How many leading words of ``text`` repeat the tail of ``prev``.
+
+    Word-level, not character-level: a character overlap happily cuts "and"
+    down to "nd" when the previous cue merely ended in "a".
+    """
+    p, t = prev.split(), text.split()
+    # ponytail: O(cue length^2), and a cue is a dozen words. Revisit only if
+    # cues ever get long.
+    for k in range(min(len(p), len(t)), 0, -1):
+        if p[-k:] == t[:k]:
+            return k
+    return 0
 
 
 def _default_validator(filtered_text):
