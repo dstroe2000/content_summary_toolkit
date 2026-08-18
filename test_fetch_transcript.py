@@ -184,6 +184,45 @@ def test_timeout_is_reportable_without_enrichment():
     assert (enriched.title, round(enriched.transcript_kb)) == ("Some Video", 229)
 
 
+def test_cookie_failure_falls_back_to_anonymous_fetch():
+    """PO-token gate: cookies yield no .srt, the anonymous retry must save the run.
+
+    Observed 2026-08-17: YouTube began refusing auto-captions on the
+    cookie-authenticated path ("missing subtitles languages because a PO token
+    was not provided"), failing 17/18 of a batch. Anonymous fetch still worked.
+    """
+    import fabric_utils
+
+    calls = []
+
+    def fake_run_command(cmd, timeout=None):
+        calls.append(cmd)
+        # First call carries cookies and writes nothing; second is anonymous.
+        if "--cookies-from-browser" not in cmd:
+            tmpdir = shlex.split(cmd.split(" -o ")[1])[0].rsplit("/", 1)[0]
+            with open(os.path.join(tmpdir, "s.en.srt"), "w") as f:
+                f.write(SRT)
+        return True, ""
+
+    real = fabric_utils.run_command
+    fabric_utils.run_command = fake_run_command
+    dest = "/tmp/_transcript_fallback_check.txt"
+    if os.path.exists(dest):
+        os.remove(dest)
+    try:
+        ok, reason = fabric_utils.fetch_transcript("https://www.youtube.com/watch?v=X", dest)
+    finally:
+        fabric_utils.run_command = real
+
+    assert ok, f"fallback did not recover the fetch: {reason}"
+    assert len(calls) == 2, f"expected cookie attempt then anonymous retry, got {len(calls)}"
+    assert "--cookies-from-browser" in calls[0], "first attempt should use cookies"
+    assert "--cookies-from-browser" not in calls[1], "retry should be anonymous"
+    with open(dest) as f:
+        assert f.readline().startswith("[00:00:"), "fallback wrote no timestamped transcript"
+    os.remove(dest)
+
+
 def test_live():
     ok, reason = fetch_transcript(
         "https://www.youtube.com/watch?v=Oz4p0ESLJV0", "/tmp/_transcript_check.txt")
@@ -205,6 +244,8 @@ if __name__ == "__main__":
     test_oversized_input_is_rejected_not_truncated()
     test_timeout_is_reportable_without_enrichment()
     print("timeout handling OK")
+    test_cookie_failure_falls_back_to_anonymous_fetch()
+    print("cookie fallback OK")
     if "--live" in sys.argv:
         test_live()
         print("live fetch OK")

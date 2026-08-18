@@ -527,20 +527,35 @@ def fetch_transcript(video_url, dest_path):
 
     tmpdir = tempfile.mkdtemp(prefix="transcript_")
     try:
-        # ponytail: same yt-dlp recipe regen_from_subs.sh already proved works.
-        # `env -u NODE_OPTIONS` stops a sandboxed node from breaking the n-challenge solver.
-        cmd = (
-            f"env -u NODE_OPTIONS yt-dlp {ytdlp_cookie_cli()} "
-            # ponytail: `en` alone misses videos captioned `en-US`/`en-GB`/`en-orig`;
-            # the regex catches every English variant. Translations *into* other
-            # languages are coded `xx-en-US`, so they don't match.
-            f"--write-sub --write-auto-sub --sub-lang 'en.*' --convert-subs srt "
-            f"--skip-download --ignore-no-formats-error "
-            f"-o {shlex.quote(os.path.join(tmpdir, 's.%(ext)s'))} {shlex.quote(video_url)}"
-        )
-        ok, err = run_command(cmd, timeout=300)
+        def _ytdlp(cookie_cli):
+            # ponytail: same yt-dlp recipe regen_from_subs.sh already proved works.
+            # `env -u NODE_OPTIONS` stops a sandboxed node from breaking the n-challenge solver.
+            return run_command(
+                f"env -u NODE_OPTIONS yt-dlp {cookie_cli} "
+                # ponytail: `en` alone misses videos captioned `en-US`/`en-GB`/`en-orig`;
+                # the regex catches every English variant. Translations *into* other
+                # languages are coded `xx-en-US`, so they don't match.
+                f"--write-sub --write-auto-sub --sub-lang 'en.*' --convert-subs srt "
+                f"--skip-download --ignore-no-formats-error "
+                f"-o {shlex.quote(os.path.join(tmpdir, 's.%(ext)s'))} {shlex.quote(video_url)}",
+                timeout=300,
+            )
 
+        ok, err = _ytdlp(ytdlp_cookie_cli())
         srts = sorted(f for f in os.listdir(tmpdir) if f.endswith(".srt"))
+
+        # ponytail: YouTube now gates auto-captions behind a PO token on the
+        # cookie-authenticated path ("missing subtitles languages because a PO
+        # token was not provided" -> "no subtitles for the requested languages").
+        # The anonymous path still serves them, so fall back to it. Cookies stay
+        # the default because they're what keeps the *metadata* calls off the
+        # rate limiter. Upgrade path if the anonymous path starts getting
+        # throttled: supply a real PO token instead of dropping cookies.
+        if not srts and ytdlp_cookie_cli():
+            print("... no subtitles with cookies (PO token gate); retrying anonymously")
+            ok, err = _ytdlp("")
+            srts = sorted(f for f in os.listdir(tmpdir) if f.endswith(".srt"))
+
         if not srts:
             return False, (err or "yt-dlp produced no subtitle file").splitlines()[-1][:200]
 
