@@ -541,29 +541,49 @@ def fetch_transcript(video_url, dest_path):
                 timeout=300,
             )
 
+        def _srts():
+            # ponytail: biggest, not alphabetically first. `--sub-lang 'en.*'` also
+            # matches ASR side-tracks like `en-en-<id>` that hold a single
+            # "[NO SPEECH]" cue; those sort ahead of `s.en.srt` ('-' < '.') and the
+            # 45-byte stub then passed the non-empty check and got summarized.
+            return sorted(
+                (f for f in os.listdir(tmpdir) if f.endswith(".srt")),
+                key=lambda f: os.path.getsize(os.path.join(tmpdir, f)),
+                reverse=True,
+            )
+
+        def _best_lines():
+            """Best available track as timestamped lines, or [] if none is usable."""
+            for name in _srts():
+                with open(os.path.join(tmpdir, name), "r",
+                          encoding="utf-8", errors="replace") as f:
+                    lines = _srt_to_timestamped(f.read())
+                # ponytail: a caption track can be present but hold nothing to
+                # summarize (YouTube's "[NO SPEECH]" ASR stub). Anything this short
+                # is not a transcript, and fabric turns it into a confident fake.
+                if sum(len(l.split("] ", 1)[-1]) for l in lines) >= 200:
+                    return lines
+            return []
+
         ok, err = _ytdlp(ytdlp_cookie_cli())
-        srts = sorted(f for f in os.listdir(tmpdir) if f.endswith(".srt"))
+        lines = _best_lines()
 
-        # ponytail: YouTube now gates auto-captions behind a PO token on the
-        # cookie-authenticated path ("missing subtitles languages because a PO
-        # token was not provided" -> "no subtitles for the requested languages").
-        # The anonymous path still serves them, so fall back to it. Cookies stay
-        # the default because they're what keeps the *metadata* calls off the
-        # rate limiter. Upgrade path if the anonymous path starts getting
-        # throttled: supply a real PO token instead of dropping cookies.
-        if not srts and ytdlp_cookie_cli():
-            print("... no subtitles with cookies (PO token gate); retrying anonymously")
+        # ponytail: YouTube gates real auto-captions behind a PO token on the
+        # cookie-authenticated path. The gate shows up two ways: no subtitle file
+        # at all, or -- worse -- only the "[NO SPEECH]" ASR side-tracks, which look
+        # like success. Retry anonymously on BOTH, since the anonymous path still
+        # serves the real track. Cookies stay the default because they're what
+        # keeps the *metadata* calls off the rate limiter. Upgrade path if the
+        # anonymous path starts getting throttled: supply a real PO token instead.
+        if not lines and ytdlp_cookie_cli():
+            print("... no usable subtitles with cookies (PO token gate); retrying anonymously")
             ok, err = _ytdlp("")
-            srts = sorted(f for f in os.listdir(tmpdir) if f.endswith(".srt"))
-
-        if not srts:
-            return False, (err or "yt-dlp produced no subtitle file").splitlines()[-1][:200]
-
-        with open(os.path.join(tmpdir, srts[0]), "r", encoding="utf-8", errors="replace") as f:
-            lines = _srt_to_timestamped(f.read())
+            lines = _best_lines()
 
         if not lines:
-            return False, "subtitle file contained no cues"
+            if _srts():
+                return False, "no usable transcript (caption track has no speech)"
+            return False, (err or "yt-dlp produced no subtitle file").splitlines()[-1][:200]
 
         with open(dest_path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
