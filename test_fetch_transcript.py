@@ -201,7 +201,12 @@ def test_cookie_failure_falls_back_to_anonymous_fetch():
         if "--cookies-from-browser" not in cmd:
             tmpdir = shlex.split(cmd.split(" -o ")[1])[0].rsplit("/", 1)[0]
             with open(os.path.join(tmpdir, "s.en.srt"), "w") as f:
-                f.write(SRT)
+                # Padded past the 200-char "[NO SPEECH]" floor, else the track
+                # reads as an empty ASR stub and the fallback looks broken.
+                f.write(SRT + "".join(
+                    f"\n{i}\n00:02:{i:02d},000 --> 00:02:{i + 1:02d},000\n"
+                    f"and here is more of the actual spoken transcript body, part {i}\n"
+                    for i in range(4, 9)))
         return True, ""
 
     real = fabric_utils.run_command

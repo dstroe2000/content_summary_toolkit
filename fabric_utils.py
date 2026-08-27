@@ -527,15 +527,19 @@ def fetch_transcript(video_url, dest_path):
 
     tmpdir = tempfile.mkdtemp(prefix="transcript_")
     try:
-        def _ytdlp(cookie_cli):
+        def _ytdlp(cookie_cli, extra=""):
             # ponytail: same yt-dlp recipe regen_from_subs.sh already proved works.
             # `env -u NODE_OPTIONS` stops a sandboxed node from breaking the n-challenge solver.
             return run_command(
-                f"env -u NODE_OPTIONS yt-dlp {cookie_cli} "
-                # ponytail: `en` alone misses videos captioned `en-US`/`en-GB`/`en-orig`;
-                # the regex catches every English variant. Translations *into* other
-                # languages are coded `xx-en-US`, so they don't match.
-                f"--write-sub --write-auto-sub --sub-lang 'en.*' --convert-subs srt "
+                f"env -u NODE_OPTIONS yt-dlp {cookie_cli} {extra} "
+                # ponytail: an explicit list, not `en.*`. The regex is matched
+                # case-insensitively, so it also pulled `en-ar`/`en-zh`/... -- English
+                # machine-translated *from* 11 other languages. yt-dlp downloaded all
+                # 13 tracks in alphabetical order, 429'd on `en-ar`, and aborted before
+                # ever reaching `en-orig`. Ceiling: a rarer region tag (`en-NZ`, `en-IE`)
+                # is not listed; add it here if one ever shows up.
+                f"--write-sub --write-auto-sub --convert-subs srt "
+                f"--sub-lang 'en-orig,en,en-US,en-GB,en-AU,en-CA,en-IN' "
                 f"--skip-download --ignore-no-formats-error "
                 f"-o {shlex.quote(os.path.join(tmpdir, 's.%(ext)s'))} {shlex.quote(video_url)}",
                 timeout=300,
@@ -546,10 +550,18 @@ def fetch_transcript(video_url, dest_path):
             # matches ASR side-tracks like `en-en-<id>` that hold a single
             # "[NO SPEECH]" cue; those sort ahead of `s.en.srt` ('-' < '.') and the
             # 45-byte stub then passed the non-empty check and got summarized.
+            # ponytail: `en.*` also matches `en-ar`/`en-zh` -- English *translated
+            # from* another language's captions, a round trip that mangles names and
+            # jargon. Rank the native tracks ahead of those, then biggest first.
+            def _rank(f):
+                tag = f[len("s."):-len(".srt")]
+                native = 0 if tag in ("en-orig", "en") or tag.startswith("en-US") \
+                    or tag.startswith("en-GB") else 1
+                return (native, -os.path.getsize(os.path.join(tmpdir, f)))
+
             return sorted(
                 (f for f in os.listdir(tmpdir) if f.endswith(".srt")),
-                key=lambda f: os.path.getsize(os.path.join(tmpdir, f)),
-                reverse=True,
+                key=_rank,
             )
 
         def _best_lines():
@@ -578,6 +590,14 @@ def fetch_transcript(video_url, dest_path):
         if not lines and ytdlp_cookie_cli():
             print("... no usable subtitles with cookies (PO token gate); retrying anonymously")
             ok, err = _ytdlp("")
+            lines = _best_lines()
+
+        # ponytail: last rung -- the `android`/`ios` players still hand out the
+        # real `en-orig` track when both the cookie'd and anonymous `web`/`tv`
+        # players are PO-token gated down to translated-only captions.
+        if not lines:
+            print("... still gated; retrying with android/ios player client")
+            ok, err = _ytdlp("", "--extractor-args 'youtube:player_client=android,ios'")
             lines = _best_lines()
 
         if not lines:
